@@ -369,7 +369,7 @@ Integrator-only documentation update on `integration/main`. No application code 
 ### Integrator notes
 
 - CLI: `python -m server` (loopback); LAN: `--allow-non-loopback` with a private host.
-- UI: **LOCAL TTS** / **DESKTOP API** toggles in the right panel; `JarvisUI.enable_local_tts` / `speak_local` / `start_desktop_api`.
+- UI: **LOCAL TTS** / **DESKTOP API** toggles in the right panel; `SlonUI.enable_local_tts` / `speak_local` / `start_desktop_api`.
 - Full suite after follow-up: **638 passed, 1 skipped**; ruff clean on touched packages.
 - No secrets; `models/` not committed; OpenClaw / SillyTavern clones untouched.
 - TLS for LAN still out of scope (personal HTTP bring-up only).

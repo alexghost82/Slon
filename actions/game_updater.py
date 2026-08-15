@@ -690,10 +690,15 @@ def _update_epic_games(epic_path: Path, game_name: str = None) -> str:
             return f"Epic update failed: {e}"
 
 
+_GAME_UPDATE_TASK = "Slon_GameUpdater"
+_LEGACY_GAME_UPDATE_TASK = "JARVIS_GameUpdater"
+
+
 def _schedule_daily_update(hour: int = 3, minute: int = 0) -> str:
-    task_name   = "JARVIS_GameUpdater"
+    task_name   = _GAME_UPDATE_TASK
     script_path = Path(__file__).resolve()
-    subprocess.run(["schtasks", "/Delete", "/TN", task_name, "/F"], capture_output=True)
+    for name in (task_name, _LEGACY_GAME_UPDATE_TASK):
+        subprocess.run(["schtasks", "/Delete", "/TN", name, "/F"], capture_output=True)
     for extra in (["/RL", "HIGHEST", "/RU", "SYSTEM"], []):
         cmd    = ["schtasks", "/Create", "/TN", task_name,
                   "/TR", f'"{sys.executable}" "{script_path}" --scheduled',
@@ -705,17 +710,26 @@ def _schedule_daily_update(hour: int = 3, minute: int = 0) -> str:
 
 
 def _cancel_scheduled_update() -> str:
-    result = subprocess.run(["schtasks", "/Delete", "/TN", "JARVIS_GameUpdater", "/F"],
-                            capture_output=True, text=True)
-    return "Scheduled update cancelled." if result.returncode == 0 else "No scheduled update found."
+    cancelled = False
+    for name in (_GAME_UPDATE_TASK, _LEGACY_GAME_UPDATE_TASK):
+        result = subprocess.run(["schtasks", "/Delete", "/TN", name, "/F"],
+                                capture_output=True, text=True)
+        if result.returncode == 0:
+            cancelled = True
+    return "Scheduled update cancelled." if cancelled else "No scheduled update found."
 
 
 def _get_schedule_status() -> str:
-    result = subprocess.run(["schtasks", "/Query", "/TN", "JARVIS_GameUpdater", "/FO", "LIST"],
-                            capture_output=True, text=True)
-    if result.returncode != 0:
+    stdout = ""
+    for name in (_GAME_UPDATE_TASK, _LEGACY_GAME_UPDATE_TASK):
+        result = subprocess.run(["schtasks", "/Query", "/TN", name, "/FO", "LIST"],
+                                capture_output=True, text=True)
+        if result.returncode == 0:
+            stdout = result.stdout.strip()
+            break
+    if not stdout:
         return "No scheduled game update found."
-    for line in result.stdout.strip().split("\n"):
+    for line in stdout.split("\n"):
         if any(k in line for k in ("Next Run", "Sonraki", "Prochaine", "Próxima", "Nächste")):
             return f"Game update scheduled. {line.strip()}"
     return "Game update is scheduled."

@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[3]
 
 def _load_main_module():
     path = ROOT / "main.py"
-    # Avoid executing UI side effects: main imports JarvisUI at module level.
+    # Avoid executing UI side effects: main imports SlonUI at module level.
     # Skip when PyQt6 is missing in the test venv.
     pytest.importorskip("PyQt6")
     spec = importlib.util.spec_from_file_location("mark_main_under_test", path)

@@ -9,14 +9,14 @@
   },
   "setup": {
     "title": "Требуется инициализация",
-    "subtitle": "Настройте J.A.R.V.I.S. перед первым запуском.",
+    "subtitle": "Настройте Slon перед первым запуском.",
     "gemini_key": "Ключ Gemini API",
     "openrouter_key": "Ключ OpenRouter API",
     "os": "Операционная система",
     "initialise": "Инициализировать системы"
   },
   "window": {
-    "title": "J.A.R.V.I.S — Slon"
+    "title": "Slon"
   },
   "input": {
     "placeholder": "Введите команду или вопрос…"

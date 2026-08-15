@@ -163,7 +163,7 @@ def test_listener_control_plane_status_chat_and_runtime() -> None:
 
     def reply(text: str) -> None:
         seen.append(text)
-        plane.append_log("Jarvis: systems nominal")
+        plane.append_log("Slon: systems nominal")
 
     plane.bind_text_handler(reply)
     plane.bind_command("pause", lambda: plane.update_state(assistant_state="MUTED"))

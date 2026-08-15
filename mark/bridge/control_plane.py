@@ -22,7 +22,7 @@ class ControlPlaneUnavailable(RuntimeError):
 class DesktopControlPlane:
     """Single source of truth for remote-visible desktop state.
 
-    It owns no sockets and no secrets. PyQt and ``JarvisLive`` update it, while
+    It owns no sockets and no secrets. PyQt and ``SlonLive`` update it, while
     ``DesktopControlListener`` reads snapshots and dispatches approved commands.
     """
 
@@ -120,7 +120,8 @@ class DesktopControlPlane:
         with self._lock:
             self._log.append(entry)
             del self._log[:-500]
-            if message.lower().startswith("jarvis:"):
+            lower = message.lower()
+            if lower.startswith("slon:") or lower.startswith("jarvis:"):
                 self._latest_reply = message.split(":", 1)[1].strip()
                 self._reply_sequence += 1
                 self._reply_condition.notify_all()

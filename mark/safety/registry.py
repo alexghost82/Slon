@@ -289,6 +289,8 @@ _REGISTRY: dict[str, ToolSpec] = {
             ),
         ),
     ),
+    "shutdown_slon": ToolSpec(RiskLevel.BIOMETRIC),
+    # Legacy alias — same risk gate if an old session still emits this name.
     "shutdown_jarvis": ToolSpec(RiskLevel.BIOMETRIC),
     "generated_code": ToolSpec(
         RiskLevel.BIOMETRIC,

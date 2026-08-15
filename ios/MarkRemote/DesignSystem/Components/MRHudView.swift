@@ -41,7 +41,7 @@ public struct MRHudView: View {
         }
         .aspectRatio(1, contentMode: .fit)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("JARVIS")
+        .accessibilityLabel("Slon")
         .accessibilityValue(state.rawValue)
     }
 

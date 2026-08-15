@@ -9,14 +9,14 @@
   },
   "setup": {
     "title": "Initialisation required",
-    "subtitle": "Configure J.A.R.V.I.S. before first boot.",
+    "subtitle": "Configure Slon before first boot.",
     "gemini_key": "Gemini API key",
     "openrouter_key": "OpenRouter API key",
     "os": "Operating system",
     "initialise": "Initialise systems"
   },
   "window": {
-    "title": "J.A.R.V.I.S — Slon"
+    "title": "Slon"
   },
   "input": {
     "placeholder": "Type a command or question…"

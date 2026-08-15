@@ -8,7 +8,7 @@ from pathlib import Path
 import sounddevice as sd
 from google import genai
 from google.genai import types
-from ui import JarvisUI
+from ui import SlonUI
 from memory.memory_manager import (
     load_memory, update_memory, format_memory_for_prompt,
     should_extract_memory, extract_memory
@@ -32,6 +32,8 @@ from actions.web_search        import web_search as web_search_action
 from actions.computer_control  import computer_control
 from actions.game_updater      import game_updater
 
+from speech.wake_word import WAKE_WORD, contains_wake_word
+
 # New-stack bridge (Wave 13); optional — never break legacy Gemini Live.
 try:
     from mark.bridge import authorize_tool, build_runtime_stack
@@ -54,6 +56,8 @@ CHANNELS            = 1
 SEND_SAMPLE_RATE    = 16000
 RECEIVE_SAMPLE_RATE = 24000
 CHUNK_SIZE          = 1024
+# After the last finished turn while awake, return to standby (need wake word again).
+WAKE_IDLE_SECONDS   = 45.0
 
 
 def _get_api_key() -> str:
@@ -92,18 +96,18 @@ def _load_system_prompt() -> str:
         return PROMPT_PATH.read_text(encoding="utf-8")
     except Exception:
         return (
-            "You are JARVIS, Tony Stark's AI assistant. "
+            "You are Slon, a calm, direct personal AI assistant (JARVIS-like manner). "
             "Be concise, direct, and always use the provided tools to complete tasks. "
             "Never simulate or guess results — always call the appropriate tool."
         )
     
 _last_memory_input = ""
 
-def _update_memory_async(user_text: str, jarvis_text: str) -> None:
+def _update_memory_async(user_text: str, assistant_text: str) -> None:
     global _last_memory_input
 
     user_text   = (user_text   or "").strip()
-    jarvis_text = (jarvis_text or "").strip()
+    assistant_text = (assistant_text or "").strip()
 
     if len(user_text) < 5 or user_text == _last_memory_input:
         return
@@ -111,9 +115,9 @@ def _update_memory_async(user_text: str, jarvis_text: str) -> None:
 
     try:
         api_key = _get_api_key()
-        if not should_extract_memory(user_text, jarvis_text, api_key):
+        if not should_extract_memory(user_text, assistant_text, api_key):
             return
-        data = extract_memory(user_text, jarvis_text, api_key)
+        data = extract_memory(user_text, assistant_text, api_key)
         if data:
             update_memory(data)
             print(f"[Memory] ✅ {list(data.keys())}")
@@ -480,11 +484,11 @@ TOOL_DECLARATIONS = [
     }
 },
     {
-    "name": "shutdown_jarvis",
+    "name": "shutdown_slon",
     "description": (
         "Shuts down the assistant completely. "
         "Call this when the user expresses intent to end the conversation, "
-        "close the assistant, say goodbye, or stop Jarvis. "
+        "close the assistant, say goodbye, or stop Slon. "
         "The user can say this in ANY language."
     ),
     "parameters": {
@@ -525,9 +529,9 @@ TOOL_DECLARATIONS = [
 ]
 
 
-class JarvisLive:
+class SlonLive:
 
-    def __init__(self, ui: JarvisUI, runtime_stack=None):
+    def __init__(self, ui: SlonUI, runtime_stack=None):
         self.ui             = ui
         self.session        = None
         self.audio_in_queue = None
@@ -535,6 +539,9 @@ class JarvisLive:
         self._loop          = None
         self._is_speaking   = False
         self._speaking_lock = threading.Lock()
+        self._awake         = False
+        self._awake_lock    = threading.Lock()
+        self._sleep_handle: asyncio.TimerHandle | None = None
         self.runtime_stack  = runtime_stack
         self.ui.on_text_command = self._on_text_command
         control_plane = getattr(self.ui, "control_plane", None)
@@ -548,9 +555,78 @@ class JarvisLive:
                 except Exception:
                     print(f"[Bridge] {line}")
 
+    def is_awake(self) -> bool:
+        with self._awake_lock:
+            return self._awake
+
+    def _cancel_sleep_timer(self) -> None:
+        handle = self._sleep_handle
+        self._sleep_handle = None
+        if handle is not None:
+            handle.cancel()
+
+    def _arm_sleep_timer(self) -> None:
+        """Return to wake-word standby after idle silence while awake."""
+        if not self._loop:
+            return
+        self._cancel_sleep_timer()
+
+        def _sleep() -> None:
+            self._sleep_handle = None
+            if self.is_awake() and not self._is_speaking:
+                self.enter_standby(reason="idle")
+
+        self._sleep_handle = self._loop.call_later(WAKE_IDLE_SECONDS, _sleep)
+
+    def enter_standby(self, *, reason: str = "standby") -> None:
+        with self._awake_lock:
+            was_awake = self._awake
+            self._awake = False
+        self._cancel_sleep_timer()
+        self._drain_playback_queue()
+        if was_awake or reason == "boot":
+            print(f"[Slon] 💤 Standby ({reason}) — say '{WAKE_WORD}'")
+            try:
+                self.ui.write_log(f"SYS: Standby — say «{WAKE_WORD}» to wake.")
+            except Exception:
+                pass
+        if not self.ui.muted:
+            self.ui.set_state("STANDBY")
+
+    def wake(self, *, source: str = "voice") -> bool:
+        """Mark the assistant awake. Returns True if this call transitioned sleep→wake."""
+        with self._awake_lock:
+            was = self._awake
+            self._awake = True
+        self._cancel_sleep_timer()
+        if was:
+            self._arm_sleep_timer()
+            return False
+        print(f"[Slon] ⚡ Awake ({source})")
+        try:
+            self.ui.write_log(f"SYS: Wake word detected ({source}).")
+        except Exception:
+            pass
+        if not self.ui.muted:
+            self.ui.set_state("LISTENING")
+        self._arm_sleep_timer()
+        return True
+
+    def _drain_playback_queue(self) -> None:
+        queue = self.audio_in_queue
+        if queue is None:
+            return
+        try:
+            while True:
+                queue.get_nowait()
+        except Exception:
+            pass
+
     def _on_text_command(self, text: str):
         if not self._loop or not self.session:
             return
+        # Typed commands are intentional — bypass the wake word.
+        self.wake(source="text")
         asyncio.run_coroutine_threadsafe(
             self.session.send_client_content(
                 turns={"parts": [{"text": text}]},
@@ -565,7 +641,7 @@ class JarvisLive:
         if value:
             self.ui.set_state("SPEAKING")
         elif not self.ui.muted:
-            self.ui.set_state("LISTENING")
+            self.ui.set_state("LISTENING" if self.is_awake() else "STANDBY")
 
     def speak(self, text: str):
         if not self._loop or not self.session:
@@ -623,7 +699,7 @@ class JarvisLive:
         name = fc.name
         args = dict(fc.args or {})
 
-        print(f"[JARVIS] 🔧 {name}  {args}")
+        print(f"[Slon] 🔧 {name}  {args}")
         self.ui.set_state("THINKING")
 
         if authorize_tool is not None and self.runtime_stack is not None:
@@ -644,7 +720,7 @@ class JarvisLive:
                         reason = "approved by paired remote device"
             if not allowed:
                 msg = f"Blocked by SafetyPolicy: {reason}"
-                print(f"[JARVIS] 🛑 {msg}")
+                print(f"[Slon] 🛑 {msg}")
                 try:
                     self.ui.write_log(f"SYS: {msg}")
                 except Exception:
@@ -759,7 +835,7 @@ class JarvisLive:
             elif name == "flight_finder":
                 r = await loop.run_in_executor(None, lambda: flight_finder(parameters=args, player=self.ui))
                 result = r or "Done."
-            elif name == "shutdown_jarvis":
+            elif name in ("shutdown_slon", "shutdown_jarvis"):
                 self.ui.write_log("SYS: Shutdown requested.")
                 self.speak("Goodbye, sir.")
 
@@ -778,9 +854,9 @@ class JarvisLive:
             self.speak_error(name, e)
 
         if not self.ui.muted:
-            self.ui.set_state("LISTENING")
+            self.ui.set_state("LISTENING" if self.is_awake() else "STANDBY")
 
-        print(f"[JARVIS] 📤 {name} → {str(result)[:80]}")
+        print(f"[Slon] 📤 {name} → {str(result)[:80]}")
 
         return types.FunctionResponse(
             id=fc.id, name=name,
@@ -793,13 +869,13 @@ class JarvisLive:
             await self.session.send_realtime_input(media=msg)
 
     async def _listen_audio(self):
-        print("[JARVIS] 🎤 Mic started")
+        print("[Slon] 🎤 Mic started")
         loop = asyncio.get_event_loop()
 
         def callback(indata, frames, time_info, status):
             with self._speaking_lock:
-                jarvis_speaking = self._is_speaking
-            if not jarvis_speaking and not self.ui.muted:
+                assistant_speaking = self._is_speaking
+            if not assistant_speaking and not self.ui.muted:
                 data = indata.tobytes()
                 loop.call_soon_threadsafe(
                     self.out_queue.put_nowait,
@@ -814,15 +890,15 @@ class JarvisLive:
                 blocksize=CHUNK_SIZE,
                 callback=callback,
             ):
-                print("[JARVIS] 🎤 Mic stream open")
+                print("[Slon] 🎤 Mic stream open")
                 while True:
                     await asyncio.sleep(0.1)
         except Exception as e:
-            print(f"[JARVIS] ❌ Mic: {e}")
+            print(f"[Slon] ❌ Mic: {e}")
             raise
 
     async def _receive_audio(self):
-        print("[JARVIS] 👂 Recv started")
+        print("[Slon] 👂 Recv started")
         out_buf, in_buf = [], []
 
         try:
@@ -830,21 +906,27 @@ class JarvisLive:
                 async for response in self.session.receive():
 
                     if response.data:
-                        self.audio_in_queue.put_nowait(response.data)
+                        # Gate playback until wake word (or typed command).
+                        if self.is_awake():
+                            self.audio_in_queue.put_nowait(response.data)
 
                     if response.server_content:
                         sc = response.server_content
 
                         if sc.output_transcription and sc.output_transcription.text:
-                            self.set_speaking(True)
-                            txt = sc.output_transcription.text.strip()
-                            if txt:
-                                out_buf.append(txt)
+                            if self.is_awake():
+                                self.set_speaking(True)
+                                txt = sc.output_transcription.text.strip()
+                                if txt:
+                                    out_buf.append(txt)
 
                         if sc.input_transcription and sc.input_transcription.text:
                             txt = sc.input_transcription.text.strip()
                             if txt:
                                 in_buf.append(txt)
+                                # Wake as soon as ASR hears the keyword (mid-turn).
+                                if not self.is_awake() and contains_wake_word(txt):
+                                    self.wake(source="voice")
 
                         if sc.turn_complete:
                             self.set_speaking(False)
@@ -852,14 +934,19 @@ class JarvisLive:
                             full_in = " ".join(in_buf).strip()
                             if full_in:
                                 self.ui.write_log(f"You: {full_in}")
+                                if contains_wake_word(full_in):
+                                    self.wake(source="voice")
                             in_buf = []
 
                             full_out = " ".join(out_buf).strip()
-                            if full_out:
-                                self.ui.write_log(f"Jarvis: {full_out}")
+                            if full_out and self.is_awake():
+                                self.ui.write_log(f"Slon: {full_out}")
                             out_buf = []
 
-                            if full_in and len(full_in) > 5:
+                            if self.is_awake():
+                                self._arm_sleep_timer()
+
+                            if full_in and len(full_in) > 5 and self.is_awake():
                                 threading.Thread(
                                     target=_update_memory_async,
                                     args=(full_in, full_out),
@@ -869,20 +956,33 @@ class JarvisLive:
                     if response.tool_call:
                         fn_responses = []
                         for fc in response.tool_call.function_calls:
-                            print(f"[JARVIS] 📞 {fc.name}")
-                            fr = await self._execute_tool(fc)
+                            print(f"[Slon] 📞 {fc.name}")
+                            if not self.is_awake():
+                                # Soft-block tools until wake word; keep Live session healthy.
+                                fr = types.FunctionResponse(
+                                    id=fc.id,
+                                    name=fc.name,
+                                    response={
+                                        "result": (
+                                            f"Assistant is in standby. "
+                                            f"User must say '{WAKE_WORD}' first."
+                                        )
+                                    },
+                                )
+                            else:
+                                fr = await self._execute_tool(fc)
                             fn_responses.append(fr)
                         await self.session.send_tool_response(
                             function_responses=fn_responses
                         )
 
         except Exception as e:
-            print(f"[JARVIS] ❌ Recv: {e}")
+            print(f"[Slon] ❌ Recv: {e}")
             traceback.print_exc()
             raise
 
     async def _play_audio(self):
-        print("[JARVIS] 🔊 Play started")
+        print("[Slon] 🔊 Play started")
         loop = asyncio.get_event_loop()
 
         stream = sd.RawOutputStream(
@@ -898,7 +998,7 @@ class JarvisLive:
                 self.set_speaking(True)
                 await asyncio.to_thread(stream.write, chunk)
         except Exception as e:
-            print(f"[JARVIS] ❌ Play: {e}")
+            print(f"[Slon] ❌ Play: {e}")
             raise
         finally:
             self.set_speaking(False)
@@ -913,7 +1013,7 @@ class JarvisLive:
 
         while True:
             try:
-                print("[JARVIS] 🔌 Connecting...")
+                print("[Slon] 🔌 Connecting...")
                 self.ui.set_state("THINKING")
                 config = self._build_config()
 
@@ -926,9 +1026,9 @@ class JarvisLive:
                     self.audio_in_queue = asyncio.Queue()
                     self.out_queue      = asyncio.Queue(maxsize=10)
 
-                    print("[JARVIS] ✅ Connected.")
-                    self.ui.set_state("LISTENING")
-                    self.ui.write_log("SYS: JARVIS online.")
+                    print("[Slon] ✅ Connected.")
+                    self.enter_standby(reason="boot")
+                    self.ui.write_log("SYS: Slon online.")
 
                     tg.create_task(self._send_realtime())
                     tg.create_task(self._listen_audio())
@@ -936,24 +1036,24 @@ class JarvisLive:
                     tg.create_task(self._play_audio())
                     
             except Exception as e:
-                print(f"[JARVIS] ⚠️ {e}")
+                print(f"[Slon] ⚠️ {e}")
                 traceback.print_exc()
 
             self.set_speaking(False)
             self.ui.set_state("THINKING")
-            print("[JARVIS] 🔄 Reconnecting in 3s...")
+            print("[Slon] 🔄 Reconnecting in 3s...")
             await asyncio.sleep(3)
 
 def main():
-    ui = JarvisUI("face.png")
+    ui = SlonUI("face.png")
 
     def runner():
         ui.wait_for_api_key()
         # Live Gemini path remains the default when Gemini keys are present.
         stack = _build_stack()
-        jarvis = JarvisLive(ui, runtime_stack=stack)
+        agent = SlonLive(ui, runtime_stack=stack)
         try:
-            asyncio.run(jarvis.run())
+            asyncio.run(agent.run())
         except KeyboardInterrupt:
             print("\nShutting down...")
 

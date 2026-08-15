@@ -128,7 +128,7 @@ struct DesktopControlView: View {
                 .foregroundStyle(MRColor.accentDim)
             Spacer()
             VStack(alignment: .center, spacing: 1) {
-                Text("J.A.R.V.I.S")
+                Text("Slon")
                     .font(MRTypography.headline)
                     .foregroundStyle(MRColor.accent)
                 Text("REMOTE SYSTEM INTERFACE")
@@ -159,7 +159,7 @@ struct DesktopControlView: View {
     private var hud: some View {
         MRPanel {
             VStack(spacing: MRSpacing.sm) {
-                Text("J.A.R.V.I.S")
+                Text("Slon")
                     .font(MRTypography.largeTitle)
                     .foregroundStyle(MRColor.accent)
                     .minimumScaleFactor(0.65)

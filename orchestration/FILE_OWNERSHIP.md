@@ -30,6 +30,33 @@ Rules:
 - Wave 11 is integrated.
 - Wave 12 is integrated (BASE_W12 `0be0d2e021d67d69950e01689b76abbecdf08a33`).
 - Wave 13 ownership starts from BASE_W13 `851f1559098f4c38c48fff845d3cc4f81e80cfae`.
+- **LAUNCH-MVP** ownership starts only after integrator sets `BASE_LAUNCH` (commit WIP: Slon rename + wake word + task specs). Until then do not spawn LAUNCH agents on dirty `main`.
+
+## LAUNCH-MVP (first full desktop launch)
+
+Operator launch-hardening. Master TZ: `orchestration/tasks/LAUNCH-MVP.md`.  
+Agent prompts: `orchestration/tasks/LAUNCH-AGENT-PROMPTS.md`.
+
+**Schedule:** T01∥T02∥T03 → integrate → T04 → T05 → T06 → integrate → T07.
+
+**Base commit:** `BASE_LAUNCH` = *(integrator fills after committing pre-launch WIP; do not use dirty tree)*.
+
+| Task ID | Agent | Owned paths | Shared contracts | Forbidden paths | Base commit |
+|---|---|---|---|---|---|
+| LAUNCH-T01 | docs-readme | `readme.md` | Slon Quick Start | everything else; no secrets | `BASE_LAUNCH` |
+| LAUNCH-T02 | docs-launch-runbook | `docs/audit/launch-runbook.md` | Privacy + first-run | `readme.md`, app code | `BASE_LAUNCH` |
+| LAUNCH-T03 | tooling-preflight | `mark/app/preflight.py`, `mark/app/__main__.py` (preflight entry only), `tests/unit/app/test_preflight.py` | exit 0/1 report, no secret values | `setup_wizard.py` behavior rewrite, `ui.py`, `main.py`, `readme.md`, network install | `BASE_LAUNCH` |
+| LAUNCH-T04 | ui-assets | `ui.py` (face load / HUD fallback / one SYS log only) | missing `face.png` safe | `main.py`, `config/**`, requirements | after Group A integrate |
+| LAUNCH-T05 | config-bootstrap | `config/settings.py`, `tests/unit/config/test_settings_bootstrap.py`; optional tiny call in `mark/app/setup_wizard.py` **only if** T03 not touching it — else keep bootstrap callable from settings API alone | `ensure_settings_file` | `api_keys.json`, secrets values, `ui.py`, `main.py` | after T04 |
+| LAUNCH-T06 | wake-word-polish | `ui.py` (unmute↔standby), `main.py` (only if needed for mute callback / re-assert standby), `tests/unit/speech/test_wake_word.py` | wake word `Slon` | new hotword engine/deps, parallel with T04 | after T05 |
+| LAUNCH-T07 | launch-verify | `docs/audit/launch-smoke.md`; optional one-row pointer in `docs/audit/beta-gates.md` | smoke record | feature code fixes across tree (CR instead) | after T04–T06 integrate |
+
+**Conflict notes**
+
+- `ui.py`: T04 then T06 only (never parallel).
+- `main.py`: only T06 in this wave (serial).
+- `mark/app/setup_wizard.py`: prefer **not** owned by T03/T05 simultaneously; T05 should expose `ensure_settings_file()` without requiring wizard edit when possible.
+- `readme.md` vs runbook: T01 vs T02 disjoint.
 
 ## Wave 13
 

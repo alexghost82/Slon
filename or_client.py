@@ -199,7 +199,7 @@ class OpenRouterClient:
         self,
         prompt: str,
         system: str = (
-            "You are a component of Slon, an AI assistant inspired by JARVIS. "
+            "You are a component of Slon. Keep a JARVIS-like tone: calm, direct, professional. "
             "Be concise, helpful, and precise."
         ),
         model: Optional[str] = None,
