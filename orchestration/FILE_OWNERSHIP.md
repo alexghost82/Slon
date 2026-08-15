@@ -39,7 +39,7 @@ Agent prompts: `orchestration/tasks/LAUNCH-AGENT-PROMPTS.md`.
 
 **Schedule:** T01∥T02∥T03 → integrate → T04 → T05 → T06 → integrate → T07.
 
-**Base commit:** `BASE_LAUNCH` = `f729ccdbe1f46275b2abf80c467998376376634a`.
+**Base commit:** `BASE_LAUNCH` = `a22efa280911aa5e21a26541a2b59d658b3fe810`.
 
 | Task ID | Agent | Owned paths | Shared contracts | Forbidden paths | Base commit |
 |---|---|---|---|---|---|
