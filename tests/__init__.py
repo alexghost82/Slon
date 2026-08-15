@@ -1,1 +1,1 @@
-"""Unit-test package for MARK XXXIX-OR."""
+"""Unit-test package for Slon."""

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 SERVICE_TYPE = "_mark-control._tcp.local."
-SERVICE_NAME = "MARK XXXIX Desktop Control"
+SERVICE_NAME = "Slon Desktop Control"
 
 
 @dataclass

@@ -1,4 +1,4 @@
-# Beta gates checklist — MARK XXXIX-OR Wave 11
+# Beta gates checklist — Slon Wave 11
 
 This document records verification for a **personal / non-commercial beta** under
 CC BY-NC 4.0. It is **not** a commercial-readiness claim.
@@ -51,7 +51,7 @@ $PY -m pytest -q
 $PY -m ruff check tests
 $PY -m mypy   # informational; deferred clean
 
-cd /Users/slon/Mark-XXXIX-OR/ios
+cd /Users/slon/Documents/GitHub/Slon/ios
 export DEVELOPER_DIR=/Users/slon/Downloads/Xcode-beta.app/Contents/Developer
 swift test
 ```

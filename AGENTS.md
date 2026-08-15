@@ -1,15 +1,15 @@
-# AGENTS.md — MARK XXXIX-OR
+# AGENTS.md — Slon
 
 Этот файл задаёт правила для главного интегратора и изолированных implementation sub-agents.
 
 ## Репозиторий
 
-- Интеграционный клон: `/Users/slon/Mark-XXXIX-OR`
+- Интеграционный клон: `/Users/slon/Documents/GitHub/Slon`
 - Интеграционная ветка: `integration/main`
 - Worktrees: `/Users/slon/mark-worktrees/<wave>-<task-id>-<short-name>`
 - Ветки задач: `agent/<wave>-<task-id>-<short-name>`
 - Never push to third-party/upstream remotes; push only to `alexghost82` when requested; local by default.
-- **Git push policy (2026-08-15):** local by default; when push is requested, only `alexghost82`. Never push to third-party or upstream remotes (any other org/user). Non-`alexghost82` remotes may fetch, but `pushUrl` must stay `DISABLED`. A push-capable remote is allowed only under `alexghost82` after the user creates/requests that repo. As of 2026-08-15 no `alexghost82` Mark-XXXIX-OR GitHub repo exists — push remains disabled until then.
+- **Git push policy (2026-08-15):** local by default; when push is requested, only `alexghost82`. Never push to third-party or upstream remotes (any other org/user). Non-`alexghost82` remotes may fetch, but `pushUrl` must stay `DISABLED`. A push-capable remote is allowed only under `alexghost82` after the user creates/requests that repo. As of 2026-08-15 no `alexghost82` Slon GitHub repo exists — push remains disabled until then.
 
 ## Неприкосновенные правила
 

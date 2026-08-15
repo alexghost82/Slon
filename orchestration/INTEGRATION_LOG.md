@@ -1,12 +1,12 @@
-# INTEGRATION_LOG — MARK XXXIX-OR
+# INTEGRATION_LOG — Slon
 
 ## Bootstrap
 
 - Date: 2026-08-15
-- Source clone: `/Users/slon/SillyTavern/Mark-XXXIX-OR` at `eac6378`
-- Integration clone: `/Users/slon/Mark-XXXIX-OR`
+- Source clone: `/Users/slon/SillyTavern/Slon` at `eac6378`
+- Integration clone: `/Users/slon/Documents/GitHub/Slon`
 - Branch: `integration/main`
-- Push remote: disabled (`remote.origin.pushurl=DISABLED`). Policy updated 2026-08-15: **local by default; when push is requested, only `alexghost82`.** Never push to third-party/upstream remotes or other orgs/users. No alexghost82 Mark-XXXIX-OR repo found yet — push stays disabled until user creates/requests it.
+- Push remote: disabled (`remote.origin.pushurl=DISABLED`). Policy updated 2026-08-15: **local by default; when push is requested, only `alexghost82`.** Never push to third-party/upstream remotes or other orgs/users. No alexghost82 Slon repo found yet — push stays disabled until user creates/requests it.
 - User secrets and OpenClaw working tree: not copied
 
 ## Wave 0
@@ -308,7 +308,7 @@ Integrator-only documentation update on `integration/main`. No application code 
 | 2 | API keys | Keys remain in OpenClaw workspace secret store; no rotation required per user 2026-08-15. Use existing keys for local runs. Never commit keys; never put key material in orchestration docs, INTEGRATION_LOG, or task specs. |
 | 3 | Piper TTS | Concrete choice approved. Runtime: injected `SpeechSynthesizer` wrapping local **rhasspy/piper** CLI ([MIT](https://github.com/rhasspy/piper); prefer MIT lineage, not `piper1-gpl`). Voice: **ru_RU-dmitri-medium** ([MIT](https://huggingface.co/rhasspy/piper-voices); dataset CC0). Spec: `orchestration/tasks/W12-T01.md`. Models live under gitignored `/models/` (or documented local path); no auto-download. |
 | 4 | Network | iPhone on **same LAN** approved. Not public internet / not APNs product / not VPN product. Desktop Control API may bind for same-network LAN with existing auth/pairing; default remains loopback / default-secure; no "open to internet" claim. Gap vs current loopback-default mock → `W12-T02`. |
-| 5 | Git remote | **Updated 2026-08-15:** local by default; when push is requested, only `alexghost82`. Never push to third-party/upstream remotes or any other org/user. Non-alexghost82 remotes: fetch OK, `pushUrl=DISABLED`. No alexghost82 Mark-XXXIX-OR repo found; push remains disabled until user creates/requests repo. |
+| 5 | Git remote | **Updated 2026-08-15:** local by default; when push is requested, only `alexghost82`. Never push to third-party/upstream remotes or any other org/user. Non-alexghost82 remotes: fetch OK, `pushUrl=DISABLED`. No alexghost82 Slon repo found; push remains disabled until user creates/requests repo. |
 
 ### Wave 11 deferred table (post-decision)
 
@@ -394,7 +394,7 @@ and updated `docs/audit/deferred-bonjour-qr-live-video.md`.
 
 ### Git push policy (2026-08-15)
 
-**Decision:** local by default; when push is requested, only `alexghost82`. Never push to third-party/upstream remotes or any other org/user. Verified via GitHub API: alexghost82 has no Mark-XXXIX-OR (or similarly named) repo among listed public repos; no push-capable remote configured. `origin` remains local path with `pushUrl=DISABLED`.
+**Decision:** local by default; when push is requested, only `alexghost82`. Never push to third-party/upstream remotes or any other org/user. Verified via GitHub API: alexghost82 has no Slon (or similarly named) repo among listed public repos; no push-capable remote configured. `origin` remains local path with `pushUrl=DISABLED`.
 
 
 ## Wave 13

@@ -1,4 +1,4 @@
-# DEPENDENCY_GRAPH — MARK XXXIX-OR
+# DEPENDENCY_GRAPH — Slon
 
 ## Wave graph
 

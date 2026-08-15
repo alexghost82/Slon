@@ -30,7 +30,7 @@ from server.tls import TlsConfigError, ensure_tls_material
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m server",
-        description="MARK XXXIX-OR Desktop Control API (loopback-default listener)",
+        description="Slon Desktop Control API (loopback-default listener)",
     )
     parser.add_argument(
         "--host",

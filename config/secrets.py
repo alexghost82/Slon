@@ -25,7 +25,7 @@ from pathlib import Path
 KNOWN_SECRET_NAMES = frozenset(
     {"gemini_api_key", "openrouter_api_key", "openai_api_key"}
 )
-SERVICE_NAME = "Mark-XXXIX-OR"
+SERVICE_NAME = "Slon"
 FALLBACK_PATH = Path(__file__).resolve().parent / "api_keys.json"
 
 

@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// MARK XXXIX visual tokens shared with the PyQt desktop HUD.
+/// Slon visual tokens shared with the PyQt desktop HUD.
 ///
 /// The product intentionally uses one high-contrast dark appearance on every
 /// platform. Semantic names keep feature views decoupled from raw colors while

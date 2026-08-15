@@ -1,4 +1,4 @@
-# Third-party licenses — MARK XXXIX-OR
+# Third-party licenses — Slon
 
 This file is a license registry for the current tree. It is not a grant of rights
 and it does not replace the source-project terms in `readme.md`.

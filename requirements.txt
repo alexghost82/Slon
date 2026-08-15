@@ -1,4 +1,4 @@
-# Compatibility shim for MARK XXXIX-OR.
+# Compatibility shim for Slon.
 # Installs cross-platform runtime deps only (requirements-base.txt).
 # This file must not pull Windows-only packages onto macOS or Linux.
 #

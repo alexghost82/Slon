@@ -1,4 +1,4 @@
-# 🤖 MARK XXXIX-OR (39)
+# 🤖 Slon
 ### The Ultimate Cross-Platform Personal AI Assistant
 
 > 📺 **[Watch the full setup video on YouTube](https://youtu.be/ldvDNzwnM8k)**
@@ -9,7 +9,7 @@ A real-time voice AI that can hear, see, understand, and control your computer �
 
 ## ✨ Overview
 
-MARK XXXIX-OR represents the pinnacle of the Jarvis series, evolving into a more flexible and robust system. It bridges the gap between the operating system and human intent. Through natural dialogue, Mark 39 analyzes your screen, processes uploaded documents, and executes complex workflows with a brand-new, adaptive interface.
+Slon represents the pinnacle of the Jarvis series, evolving into a more flexible and robust system. It bridges the gap between the operating system and human intent. Through natural dialogue, Slon analyzes your screen, processes uploaded documents, and executes complex workflows with a brand-new, adaptive interface.
 
 It's not just an assistant — it's an extension of your digital life.
 
@@ -29,7 +29,7 @@ It's not just an assistant — it's an extension of your digital life.
 
 ---
 
-## 🆕 What's New in XXXIX-OR
+## 🆕 What's New in Slon
 
 - 📂 **Advanced File Handling** — New support for direct file uploads. Drop PDFs, source code, or images into the assistant to have them analyzed, summarized, or edited instantly.
 - 🎨 **Adaptive & Flexible UI** — A complete overhaul of the interface. The new UI is fully resizable and responsive, featuring transparency controls and customizable layouts to fit your workspace perfectly.
@@ -42,7 +42,7 @@ It's not just an assistant — it's an extension of your digital life.
 ## ⚡ Quick Start
 
 ```bash
-cd Mark-XXXIX-OR
+cd Slon
 pip install -r requirements.txt
 playwright install
 python main.py
@@ -72,6 +72,5 @@ Licensed under **[Creative Commons BY-NC 4.0](https://creativecommons.org/licens
 
 ## Attribution
 
-Original upstream project: **MARK XXXIX-OR**.
-Licensed for personal / non-commercial use under **Creative Commons BY-NC 4.0**.
-Attribution is to the original upstream project and its author as required by that license (without embedding third-party GitHub or social handles in this integration tree).
+This project is licensed for personal / non-commercial use under **Creative Commons BY-NC 4.0**.
+Attribution is to the original upstream author as required by that license (without embedding third-party GitHub or social handles in this tree).

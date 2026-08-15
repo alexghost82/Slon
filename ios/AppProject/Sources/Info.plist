@@ -31,7 +31,7 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Подключение к вашему Mac с MARK в той же локальной сети.</string>
+	<string>Подключение к вашему Mac с Slon в той же локальной сети.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_mark-control._tcp</string>

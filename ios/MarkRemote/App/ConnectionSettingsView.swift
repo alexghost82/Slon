@@ -62,7 +62,7 @@ struct ConnectionSettingsView: View {
 
             Section("Найденные Mac") {
                 if discoveredServices.isEmpty {
-                    Text("Поиск сервисов MARK в локальной сети…")
+                    Text("Поиск сервисов Slon в локальной сети…")
                         .foregroundStyle(MRColor.secondaryLabel)
                 } else {
                     ForEach(discoveredServices, id: \.name) { service in

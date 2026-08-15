@@ -312,7 +312,7 @@ def _schedule(
             start=start,
             command=sys.executable,
             arguments=arguments,
-            description=f"MARK Reminder {record['id']}",
+            description=f"Slon Reminder {record['id']}",
         )
         write_windows_task_xml(xml_path, root)
         return _invoke(

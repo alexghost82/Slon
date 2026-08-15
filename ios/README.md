@@ -1,6 +1,6 @@
 # MarkRemote (iOS)
 
-Swift 6 package for the MARK remote client. Talks only to the Desktop Control API (loopback / paired LAN). Does not embed AI provider API keys.
+Swift 6 package for the Slon remote client. Talks only to the Desktop Control API (loopback / paired LAN). Does not embed AI provider API keys.
 
 ## Build / test
 

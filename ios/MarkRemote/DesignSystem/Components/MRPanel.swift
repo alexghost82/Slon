@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Bordered MARK panel used by both compact iPhone cards and iPad columns.
+/// Bordered Slon panel used by both compact iPhone cards and iPad columns.
 public struct MRPanel<Content: View>: View {
     private let content: Content
 

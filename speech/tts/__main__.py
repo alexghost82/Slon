@@ -27,7 +27,7 @@ from speech.tts.local_factory import default_piper_dir, resolve_piper_binary
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m speech.tts",
-        description="MARK XXXIX-OR Piper TTS utilities (opt-in download)",
+        description="Slon Piper TTS utilities (opt-in download)",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 

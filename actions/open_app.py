@@ -1,5 +1,5 @@
 # actions/open_app.py
-# MARK XXV — Cross-Platform App Launcher
+# Slon — Cross-Platform App Launcher
 
 import time
 import subprocess

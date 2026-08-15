@@ -178,6 +178,6 @@ private struct RemoteFeaturesView: View {
     }
 }
 
-#Preview("MARK XXXIX") {
+#Preview("Slon") {
     MarkRemoteRootView()
 }

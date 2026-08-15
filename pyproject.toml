@@ -1,7 +1,7 @@
 [project]
-name = "mark-xxxix-or"
+name = "slon"
 version = "0.1.0"
-description = "Test harness and developer tooling for MARK XXXIX-OR"
+description = "Test harness and developer tooling for Slon"
 requires-python = ">=3.11,<3.13"
 # Runtime dependencies are owned by W01-T02. This file configures tooling only.
 

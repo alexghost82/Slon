@@ -1,12 +1,12 @@
-# MASTER_ROADMAP — MARK XXXIX-OR
+# MASTER_ROADMAP — Slon
 
 Источник требований: `CODE_AGENT_IMPLEMENTATION_PLAN.md`.
 Интеграционная ветка: `integration/main`.
-Интеграционный клон: `/Users/slon/Mark-XXXIX-OR`.
+Интеграционный клон: `/Users/slon/Documents/GitHub/Slon`.
 
 ## Initiative
 
-Модернизация MARK XXXIX-OR: русский desktop-клиент, выбор Gemini / OpenAI / OpenRouter / local, безопасные инструменты, локальные STT/TTS/vision/memory, Desktop Control API и iOS remote.
+Модернизация Slon: русский desktop-клиент, выбор Gemini / OpenAI / OpenRouter / local, безопасные инструменты, локальные STT/TTS/vision/memory, Desktop Control API и iOS remote.
 
 ## Epics
 
@@ -194,7 +194,7 @@ All previously open items below are **decided**. None remain open for MVP scope.
 2. **API keys**: User reports keys never leaked; **do not rotate**; **use existing keys** from the OpenClaw working copy when running locally. Keys remain in OpenClaw workspace secret store; no rotation required per user 2026-08-15. Never commit keys; never put key material in orchestration docs, INTEGRATION_LOG, or task specs.
 3. **Piper TTS**: Approved concrete choice — see W12-T01. Runtime: injected `SpeechSynthesizer` wrapping local **rhasspy/piper** CLI (MIT). Voice: **ru_RU-dmitri-medium** (MIT; dataset CC0). Spec under `orchestration/tasks/W12-T01.md`.
 4. **Network**: iPhone on **same LAN** is approved. Not full public internet / not APNs product / not VPN product. Desktop Control API may bind for same-network LAN access with existing auth/pairing; still default-secure (loopback default); no "open to internet" claim. Implementation gap vs loopback-only defaults → `W12-T02`.
-5. **Git remote / push policy (updated 2026-08-15):** **local by default; when push is requested, only `alexghost82`.** Never push to third-party/upstream remotes or any other org/user. `remote.origin.pushurl` stays `DISABLED` for non-`alexghost82` remotes (fetch-only OK). No `alexghost82/Mark-XXXIX-OR` (or equivalent) repo found on GitHub as of this decision — do not create a public repo without asking; push target = `alexghost82` when the user creates/requests the repo.
+5. **Git remote / push policy (updated 2026-08-15):** **local by default; when push is requested, only `alexghost82`.** Never push to third-party/upstream remotes or any other org/user. `remote.origin.pushurl` stays `DISABLED` for non-`alexghost82` remotes (fetch-only OK). No `alexghost82/Slon` (or equivalent) repo found on GitHub as of this decision — do not create a public repo without asking; push target = `alexghost82` when the user creates/requests the repo.
 6. **Piper auto-download (Wave 13 policy change)**: Opt-in / documented operator download helper is **approved**. Silent download on every start remains forbidden. CI tests must pass offline (mock/skip network). Models stay gitignored under `/models/`.
 7. **TLS on LAN API**: Approved for personal same-LAN / loopback Desktop Control (self-signed or mkcert). Not a public-internet product.
 

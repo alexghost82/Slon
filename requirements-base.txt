@@ -1,4 +1,4 @@
-# Cross-platform runtime dependencies for MARK XXXIX-OR.
+# Cross-platform runtime dependencies for Slon.
 # OS-specific extras live in:
 #   requirements-macos.txt
 #   requirements-windows.txt

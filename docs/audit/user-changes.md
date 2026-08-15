@@ -4,8 +4,8 @@ Scan date: **2026-08-15**
 
 Read-only sources:
 
-- `openclaw` — `/Users/slon/.openclaw/workspace/Mark-XXXIX-OR` (`main` @ `eac6378`)
-- `cursor-workspace` — `/Users/slon/SillyTavern/Mark-XXXIX-OR` (`main` @ `eac6378`)
+- `openclaw` — `/Users/slon/.openclaw/workspace/Slon` (`main` @ `eac6378`)
+- `cursor-workspace` — `/Users/slon/SillyTavern/Slon` (`main` @ `eac6378`)
 
 Command used in both trees: `git status --short`.
 
@@ -26,10 +26,10 @@ This integration clone must not receive secrets, key material, or user memory. S
 | `agent/__pycache__/` | openclaw | untracked | never-port | — | Package bytecode cache. Generated artifact. Newly listed beyond the known root `__pycache__/`. |
 | `config/__pycache__/` | openclaw | untracked | never-port | — | Package bytecode cache. Generated artifact. Newly listed beyond the known root `__pycache__/`. |
 | `memory/__pycache__/` | openclaw | untracked | never-port | — | Package bytecode cache. Generated artifact. Newly listed beyond the known root `__pycache__/`. |
-| `macos-app/` | openclaw | untracked | never-port | — | Local macOS bundle directory. Contains `Mark XXXIX OR.app`. Do not port blindly. |
+| `macos-app/` | openclaw | untracked | never-port | — | Local macOS bundle directory. Contains `Slon.app`. Do not port blindly. |
 | `.DS_Store` | cursor-workspace | untracked | never-port | — | Finder metadata. |
 | `CODE_AGENT_IMPLEMENTATION_PLAN.md` | cursor-workspace | untracked | later-port | integrator review (no dedicated task) | User-authored Russian implementation plan. Header inspected; no secrets. Port only after integrator review; not an executable contract. |
-| `Mark-XXXIX-OR/` | cursor-workspace | untracked | never-port | — | Nested duplicate clone. Do not copy into the integration tree. |
+| `Slon/` | cursor-workspace | untracked | never-port | — | Nested duplicate clone. Do not copy into the integration tree. |
 
 ## Coverage
 
@@ -57,20 +57,20 @@ Cursor-workspace listing (3 paths):
 ```text
 ?? .DS_Store
 ?? CODE_AGENT_IMPLEMENTATION_PLAN.md
-?? Mark-XXXIX-OR/
+?? Slon/
 ```
 
 ## Newly discovered relative to the task brief
 
 - Per-package `__pycache__/` directories in OpenClaw: `actions/`, `agent/`, `config/`, `memory/` (in addition to the known root `__pycache__/`).
-- `macos-app/` contains a local `.app` bundle named `Mark XXXIX OR.app`.
+- `macos-app/` contains a local `.app` bundle named `Slon.app`.
 
 ## Classification summary
 
 | classification | count | items |
 | --- | --- | --- |
 | later-port | 4 | `actions/game_updater.py` → W01-T04; `requirements-macos.txt` → W01-T02; `run_mark.sh` → later launcher task; `CODE_AGENT_IMPLEMENTATION_PLAN.md` → integrator review |
-| never-port | 11 | secrets, memory, `.venv/`, all `__pycache__/`, `macos-app/` (`.app` bundle), `.DS_Store`, nested `Mark-XXXIX-OR/` |
+| never-port | 11 | secrets, memory, `.venv/`, all `__pycache__/`, `macos-app/` (`.app` bundle), `.DS_Store`, nested `Slon/` |
 | already-isolated | 0 | none in these two working copies |
 
 ## Integration notes

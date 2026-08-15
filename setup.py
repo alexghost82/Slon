@@ -1,4 +1,4 @@
-"""Install MARK XXXIX-OR runtime dependencies for the current OS."""
+"""Install Slon runtime dependencies for the current OS."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ def main() -> None:
     print("Installing Playwright browsers...")
     subprocess.run([sys.executable, "-m", "playwright", "install"], check=True)
 
-    print("\n✅ Setup complete! Run 'python main.py' to start MARK XXXIX-OR.")
+    print("\n✅ Setup complete! Run 'python main.py' to start Slon.")
 
 
 if __name__ == "__main__":

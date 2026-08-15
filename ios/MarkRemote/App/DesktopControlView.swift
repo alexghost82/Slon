@@ -104,7 +104,7 @@ struct DesktopControlView: View {
             .padding(MRSpacing.md)
         }
         .background(MRColor.background.ignoresSafeArea())
-        .navigationTitle("MARK XXXIX")
+        .navigationTitle("Slon")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -123,7 +123,7 @@ struct DesktopControlView: View {
 
     private var header: some View {
         HStack(spacing: MRSpacing.sm) {
-            Text("MARK XXXIX")
+            Text("Slon")
                 .font(MRTypography.caption.weight(.bold))
                 .foregroundStyle(MRColor.accentDim)
             Spacer()

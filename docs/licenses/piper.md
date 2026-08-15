@@ -1,4 +1,4 @@
-# Piper TTS licenses (MARK XXXIX-OR)
+# Piper TTS licenses (Slon)
 
 Operator-facing notes for the optional local Piper engine.
 **No binaries or ONNX models are committed to this repository.**

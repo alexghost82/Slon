@@ -189,10 +189,11 @@ def test_setup_maps_os_to_requirements_file() -> None:
     assert select("linux2") == "requirements-linux.txt"
 
 
-def test_setup_source_mentions_mark_xxxix_or_not_xxv() -> None:
+def test_setup_source_mentions_slon_not_legacy_names() -> None:
     source = (REPO_ROOT / "setup.py").read_text(encoding="utf-8")
-    assert "MARK XXXIX-OR" in source
-    assert "MARK XXV" not in source
+    assert "Slon" in source
+    assert "XXXIX" not in source
+    assert "XXV" not in source
     assert "requirements-dev.txt" not in source
     assert "playwright" in source
     assert 'if __name__ == "__main__"' in source
