@@ -271,6 +271,20 @@ class _SysMetrics:
 
 _metrics = _SysMetrics()
 
+# One-shot operator notice when face art is absent (no per-frame spam).
+_FACE_MISSING_SYS = "SYS: face.png missing; using geometric HUD"
+
+
+def face_missing_sys_notice(path: str) -> str | None:
+    """Return the SYS line when ``path`` is not a file; else None."""
+    try:
+        if Path(path).is_file():
+            return None
+    except OSError:
+        pass
+    return _FACE_MISSING_SYS
+
+
 class HudCanvas(QWidget):
     def __init__(self, face_path: str, parent=None):
         super().__init__(parent)
@@ -296,6 +310,7 @@ class HudCanvas(QWidget):
         self._blink_tick = 0
         self._particles: list[list[float]] = []
         self._face_px: QPixmap | None = None
+        self._face_sys_notice: str | None = None
         self._load_face(face_path)
 
         self._tmr = QTimer(self)
@@ -303,6 +318,11 @@ class HudCanvas(QWidget):
         self._tmr.start(16)
 
     def _load_face(self, path: str):
+        """Load circular face pixmap; on any failure use geometric HUD (no raise)."""
+        self._face_px = None
+        self._face_sys_notice = face_missing_sys_notice(path)
+        if self._face_sys_notice is not None:
+            return
         try:
             from PIL import Image, ImageDraw
             import io
@@ -1114,6 +1134,10 @@ class MainWindow(QMainWindow):
         self._log_sig.connect(self._apply_log)
         self._state_sig.connect(self._apply_state)
         self._stt_text_sig.connect(self._apply_stt_text)
+
+        # Face asset resilience: one SYS line if face.png absent (not every frame).
+        if self.hud._face_sys_notice:
+            self._log_sig.emit(self.hud._face_sys_notice)
 
         self._init_local_tts()
         self._init_local_stt()
