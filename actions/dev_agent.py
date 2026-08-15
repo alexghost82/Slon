@@ -25,9 +25,15 @@ def _get_api_key() -> str:
 
 
 def _get_model(model_name: str):
-    import google.generativeai as genai
-    genai.configure(api_key=_get_api_key())
-    return genai.GenerativeModel(model_name)
+    from google import genai
+
+    client = genai.Client(api_key=_get_api_key())
+
+    class _Model:
+        def generate_content(self, contents):
+            return client.models.generate_content(model=model_name, contents=contents)
+
+    return _Model()
 
 
 def _strip_fences(text: str) -> str:

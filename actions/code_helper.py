@@ -37,9 +37,15 @@ def _get_api_key() -> str:
 
 
 def _get_gemini(model: str = GEMINI_MODEL):
-    import google.generativeai as genai
-    genai.configure(api_key=_get_api_key())
-    return genai.GenerativeModel(model)
+    from google import genai
+
+    client = genai.Client(api_key=_get_api_key())
+
+    class _Model:
+        def generate_content(self, contents):
+            return client.models.generate_content(model=model, contents=contents)
+
+    return _Model()
 
 
 def _clean_code(text: str) -> str:

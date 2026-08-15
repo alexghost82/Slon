@@ -25,7 +25,8 @@ import tempfile
 from pathlib import Path
 from datetime import datetime
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 
 def _get_api_key() -> str:
@@ -34,9 +35,14 @@ def _get_api_key() -> str:
         return json.load(f)["gemini_api_key"]
 
 
-def _gemini_client():
-    genai.configure(api_key=_get_api_key())
-    return genai.GenerativeModel("gemini-2.5-flash")
+def _gemini_client(model_name: str = "gemini-2.5-flash"):
+    client = genai.Client(api_key=_get_api_key())
+
+    class _Model:
+        def generate_content(self, contents):
+            return client.models.generate_content(model=model_name, contents=contents)
+
+    return _Model()
 
 
 def _detect_type(path: Path) -> str:
@@ -88,7 +94,6 @@ def _process_image(path: Path, action: str, params: dict, speak=None) -> str:
     if action in ("describe", "ocr", "analyze", "read", "extract_text"):
         try:
             model  = _gemini_client()
-            img    = Image.open(path)
             prompt = {
                 "describe": "Describe this image in detail.",
                 "ocr":      "Extract all text visible in this image. Return only the text, formatted clearly.",
@@ -100,7 +105,15 @@ def _process_image(path: Path, action: str, params: dict, speak=None) -> str:
             if params.get("instruction"):
                 prompt = params["instruction"]
 
-            response = model.generate_content([prompt, img])
+            mime = {
+                "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+                "gif": "image/gif", "webp": "image/webp", "bmp": "image/bmp",
+                "tiff": "image/tiff",
+            }.get(path.suffix.lstrip(".").lower(), "image/png")
+            response = model.generate_content([
+                prompt,
+                types.Part.from_bytes(data=path.read_bytes(), mime_type=mime),
+            ])
             result   = response.text.strip()
 
             if len(result) > 500 and params.get("save", True):
@@ -536,7 +549,7 @@ def _process_audio(path: Path, action: str, params: dict, speak=None) -> str:
             }.get(path.suffix.lstrip(".").lower(), "audio/mpeg")
             response = model.generate_content([
                 "Transcribe all speech in this audio file accurately.",
-                {"mime_type": mime, "data": content}
+                types.Part.from_bytes(data=content, mime_type=mime),
             ])
             result = response.text.strip()
             if params.get("save", True):
