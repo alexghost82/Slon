@@ -1,0 +1,15 @@
+{
+  "privacy_profile": "hybrid",
+  "provider_id": "gemini",
+  "language": "ru",
+  "network_mode": "hybrid",
+  "model_roles": {
+    "chat": "",
+    "planning": "",
+    "code": "",
+    "vision": "",
+    "embeddings": "",
+    "stt": "",
+    "tts": ""
+  }
+}
