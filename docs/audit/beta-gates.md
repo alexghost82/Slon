@@ -33,6 +33,7 @@ Status vocabulary:
 | Commercial distribution | deferred (decision closed) | Personal / non-commercial only (CC BY-NC); no commercial-ready claims |
 | Wire new stacks into `ui.py` | **pass (W12 follow-up)** | Piper LOCAL TTS toggle + Desktop API listener toggle; CLI `python -m server` |
 | Clean mypy on full `tests/` | deferred | Pre-existing debt |
+| First full desktop launch (LAUNCH-MVP) | **partial** | See `docs/audit/launch-smoke.md`: unit **696 passed / 6 skipped**; preflight exit 1 on bare 3.12 without deps; manual HUD/mic smoke deferred to operator |
 
 ## Hard constraints confirmed
 

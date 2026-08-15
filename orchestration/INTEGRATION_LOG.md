@@ -441,3 +441,36 @@ and updated `docs/audit/deferred-bonjour-qr-live-video.md`.
 | QR | `server/qr.py` + `qr_png_base64`; iOS `PairingQRCodeView` |
 | Live video | `/v1/screen/frame` + `/v1/screen/stream` MJPEG |
 
+## LAUNCH-MVP
+
+- Date: 2026-08-15
+- BASE_LAUNCH (worktree start): `2df90ff0a97bbb4ca15fc0dd4bfb8fdefa6f4ebe`
+- Status: accepted and integrated (docs/tooling + launch resilience + verify)
+- Integration branch: `integration/main`
+- Push: not performed (local by default; alexghost82-only when requested; no push this wave)
+
+### Accepted
+
+| Task | Agent commit | Integration commit | Owned paths | Verification |
+|---|---|---|---|---|
+| LAUNCH-T01 | `2353a6d505671fc51ab1c7711dd19ada9f6b5c5c` | `6f0d314` | `readme.md` | non-empty Quick Start; secret scan OK |
+| LAUNCH-T02 | `1aaa445210730cba7a2bdf6dafef287cb2802367` | `0153f0f` | `docs/audit/launch-runbook.md` | Privacy + smoke; secret scan OK |
+| LAUNCH-T03 | `910361c9af7d6371a95f5f89f08c8c9e8564bd85` | `f21828e` | `mark/app/preflight.py`, `tests/unit/app/test_preflight.py` | 31 preflight unit tests; no key values printed |
+| LAUNCH-T04 | `af76672cb91c6d5616789956d70e0377f0ed1c2c` | `081cbec` | `ui.py`, `tests/unit/ui/test_face_load.py` | missing face.png safe; secret scan OK |
+| LAUNCH-T05 | `a88f09ddb9cee98d20ff02007566089d78bffa30` | `2ba3a70` | `config/settings.py`, `tests/unit/config/test_settings_bootstrap.py` | `ensure_settings_file`; 6 bootstrap tests |
+| LAUNCH-T06 | `50f43e534fd248eee41baeb9861b1c0f73263df7` | `61599d9` | `ui.py`, `main.py`, `tests/unit/speech/test_wake_word.py` | unmute→standby HUD; 10 wake-word tests |
+| LAUNCH-T07 | integrator on `integration/main` | (this log + smoke commit) | `docs/audit/launch-smoke.md`; beta-gates pointer | unit **696 passed / 6 skipped**; preflight exit 1 bare 3.12; manual HUD deferred |
+
+### Integrator notes
+
+- Group A (T01∥T02∥T03) cherry-picked after owned_paths + secret scan.
+- Group B serial T04→T05→T06; `ui.py`/`main.py` never parallel.
+- T03 agent stalled mid-commit; integrator finished test kwarg align (`version` vs `version_info`) and committed on agent branch (31 passed).
+- T07 agent stalled; integrator wrote smoke audit from verified pytest/preflight runs.
+- `ensure_settings_file()` API landed but **not** wired into `main.py`/UI yet (CR for follow-up).
+- No secrets, `models/`, or `.venv` committed. No push.
+
+### Stop conditions
+
+None hit (no owned_paths conflict after scans, no secret in diffs, no Python 3.14 expansion, no public bind, no commercial claim).
+
