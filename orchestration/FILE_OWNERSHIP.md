@@ -39,13 +39,13 @@ Agent prompts: `orchestration/tasks/LAUNCH-AGENT-PROMPTS.md`.
 
 **Schedule:** T01∥T02∥T03 → integrate → T04 → T05 → T06 → integrate → T07.
 
-**Base commit:** `BASE_LAUNCH` = *(integrator fills after committing pre-launch WIP; do not use dirty tree)*.
+**Base commit:** `BASE_LAUNCH` = `e2bd14edbd3a931f9bac2ca5f644b20049fb6d43`.
 
 | Task ID | Agent | Owned paths | Shared contracts | Forbidden paths | Base commit |
 |---|---|---|---|---|---|
-| LAUNCH-T01 | docs-readme | `readme.md` | Slon Quick Start | everything else; no secrets | `BASE_LAUNCH` |
-| LAUNCH-T02 | docs-launch-runbook | `docs/audit/launch-runbook.md` | Privacy + first-run | `readme.md`, app code | `BASE_LAUNCH` |
-| LAUNCH-T03 | tooling-preflight | `mark/app/preflight.py`, `mark/app/__main__.py` (preflight entry only), `tests/unit/app/test_preflight.py` | exit 0/1 report, no secret values | `setup_wizard.py` behavior rewrite, `ui.py`, `main.py`, `readme.md`, network install | `BASE_LAUNCH` |
+| LAUNCH-T01 | docs-readme | `readme.md` | Slon Quick Start | everything else; no secrets | `e2bd14edbd3a931f9bac2ca5f644b20049fb6d43` |
+| LAUNCH-T02 | docs-launch-runbook | `docs/audit/launch-runbook.md` | Privacy + first-run | `readme.md`, app code | `e2bd14edbd3a931f9bac2ca5f644b20049fb6d43` |
+| LAUNCH-T03 | tooling-preflight | `mark/app/preflight.py`, `mark/app/__main__.py` (preflight entry only), `tests/unit/app/test_preflight.py` | exit 0/1 report, no secret values | `setup_wizard.py` behavior rewrite, `ui.py`, `main.py`, `readme.md`, network install | `e2bd14edbd3a931f9bac2ca5f644b20049fb6d43` |
 | LAUNCH-T04 | ui-assets | `ui.py` (face load / HUD fallback / one SYS log only) | missing `face.png` safe | `main.py`, `config/**`, requirements | after Group A integrate |
 | LAUNCH-T05 | config-bootstrap | `config/settings.py`, `tests/unit/config/test_settings_bootstrap.py`; optional tiny call in `mark/app/setup_wizard.py` **only if** T03 not touching it — else keep bootstrap callable from settings API alone | `ensure_settings_file` | `api_keys.json`, secrets values, `ui.py`, `main.py` | after T04 |
 | LAUNCH-T06 | wake-word-polish | `ui.py` (unmute↔standby), `main.py` (only if needed for mute callback / re-assert standby), `tests/unit/speech/test_wake_word.py` | wake word `Slon` | new hotword engine/deps, parallel with T04 | after T05 |
