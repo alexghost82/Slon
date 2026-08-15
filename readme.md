@@ -1,0 +1,74 @@
+# Slon
+
+Slon is a desktop personal AI assistant for Windows, macOS, and Linux. It runs locally on your machine, listens for a wake word, and talks to cloud models you configure yourself—JARVIS-like tone, personal use.
+
+## Quick Start
+
+Use **Python 3.11 or 3.12** (not 3.13+).
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+```
+
+Install dependencies for your OS (pick one):
+
+```bash
+pip install -r requirements-macos.txt    # macOS
+pip install -r requirements-windows.txt  # Windows
+pip install -r requirements-linux.txt    # Linux
+```
+
+Or let the helper pick the OS file and install Playwright browsers:
+
+```bash
+python setup.py
+```
+
+If you installed via `pip` only, also run:
+
+```bash
+playwright install
+```
+
+Start the desktop app:
+
+```bash
+python main.py
+```
+
+Configure API keys in the UI or via your local config (never commit key files). A Gemini key is required for the default cloud path; OpenRouter is optional.
+
+## Requirements
+
+| Item | Notes |
+|---|---|
+| OS | Windows, macOS, or Linux |
+| Python | 3.11 or 3.12 (`>=3.11,<3.13`) |
+| Microphone | Needed for wake-word / voice input |
+| Gemini | Primary cloud provider (API key via local config) |
+| OpenRouter | Optional alternate / fallback provider |
+
+## Wake word
+
+After launch, say **Slon** (Russian ASR often hears **Слон**) to get the assistant’s attention.
+
+## Desktop API (optional)
+
+Loopback-only by default:
+
+```bash
+python -m server
+```
+
+Binds to `127.0.0.1` unless you explicitly opt into a private LAN address. Do not expose this API to the public internet.
+
+## License
+
+Personal and **non-commercial** use under [Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)](https://creativecommons.org/licenses/by-nc/4.0/).
+
+This project is **not** commercial-ready and does not grant commercial redistribution rights.
+
+## Attribution
+
+Slon is a personal desktop AI modernization. Third-party package licenses are listed in `THIRD_PARTY_LICENSES.md`. Upstream project names and social handles are intentionally omitted here; keep attribution in that registry and in your own notices if you redistribute under CC BY-NC.
