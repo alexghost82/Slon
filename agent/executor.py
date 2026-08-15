@@ -308,7 +308,7 @@ class AgentExecutor:
             steps = plan.get("steps", [])
 
             if not steps:
-                msg = "I couldn't create a valid plan for this task, sir."
+                msg = "Сэр, мне не удалось составить корректный план для этой задачи."
                 if speak:
                     speak(msg)
                 return msg
@@ -320,8 +320,8 @@ class AgentExecutor:
             for step in steps:
                 if cancel_flag and cancel_flag.is_set():
                     if speak:
-                        speak("Task cancelled, sir.")
-                    return "Task cancelled."
+                        speak("Задача отменена, сэр.")
+                    return "Задача отменена."
 
                 step_num = step.get("step", "?")
                 tool = step.get("tool") or ""
@@ -370,7 +370,7 @@ class AgentExecutor:
                             break
 
                         elif decision == ErrorDecision.ABORT:
-                            msg = f"Task aborted, sir. {recovery.get('reason', '')}"
+                            msg = f"Задача прервана, сэр. {recovery.get('reason', '')}"
                             if speak:
                                 speak(msg)
                             return msg
@@ -381,7 +381,7 @@ class AgentExecutor:
                                 try:
                                     fixed_step = generate_fix(step, error_msg, fix_suggestion)
                                     if speak:
-                                        speak("Trying an alternative approach, sir.")
+                                        speak("Пробую другой подход, сэр.")
                                     res = self._call_tool(
                                         fixed_step["tool"],
                                         fixed_step["parameters"],
@@ -411,19 +411,24 @@ class AgentExecutor:
                 return self._summarize(goal, completed_steps, speak)
 
             if replan_attempts >= self.MAX_REPLAN_ATTEMPTS:
-                msg = f"Task failed after {replan_attempts} replan attempts, sir."
+                msg = (
+                    f"Сэр, задача не выполнена после {replan_attempts} "
+                    "попыток перепланирования."
+                )
                 if speak:
                     speak(msg)
                 return msg
 
             if speak:
-                speak("Adjusting my approach, sir.")
+                speak("Корректирую подход, сэр.")
 
             replan_attempts += 1
             plan = replan(goal, completed_steps, failed_step, failed_error)
 
     def _summarize(self, goal: str, completed_steps: list, speak: Callable | None) -> str:
-        fallback = f"All done, sir. Completed {len(completed_steps)} steps for: {goal[:60]}."
+        fallback = (
+            f"Готово, сэр. Выполнено шагов: {len(completed_steps)} — {goal[:60]}."
+        )
         try:
             from google import genai
 
@@ -432,8 +437,8 @@ class AgentExecutor:
             prompt = (
                 f'User goal: "{goal}"\n'
                 f"Completed steps:\n{steps_str}\n\n"
-                "Write a single natural sentence summarizing what was accomplished. "
-                "Address the user as 'sir'. Be direct and positive."
+                "Write a single natural sentence in Russian summarizing what was "
+                "accomplished. Address the user as 'сэр'. Be direct and positive."
             )
             response = client.models.generate_content(
                 model="gemini-2.5-flash-lite",

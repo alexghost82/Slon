@@ -84,5 +84,6 @@ let package = Package(
             dependencies: ["MarkRemoteApp"],
             path: "Tests/MarkRemoteAppTests"
         ),
-    ]
+    ],
+    swiftLanguageModes: [.v6]
 )

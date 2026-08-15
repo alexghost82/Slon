@@ -18,6 +18,8 @@ import re
 import time
 from pathlib import Path
 
+from localization.ru_locale import plural_ru
+
 
 def get_base_dir():
     if getattr(sys, "frozen", False):
@@ -246,7 +248,7 @@ def _run_file(path: Path, args: list, timeout: int) -> str:
 
 def _build(description, language, output_path, args, timeout, speak=None, player=None) -> str:
     if not description:
-        return "Please describe what you want me to build, sir."
+        return "Сэр, опишите, что нужно собрать."
 
     if player:
         player.write_log("[Code] Build started...")
@@ -257,7 +259,7 @@ def _build(description, language, output_path, args, timeout, speak=None, player
         code, path = _write(description, lang, output_path, player)
         print(f"[Code] ✅ Written: {path}")
     except Exception as e:
-        msg = f"Could not write initial code: {e}"
+        msg = f"Не удалось написать исходный код: {e}"
         if speak: speak(msg)
         return msg
 
@@ -270,13 +272,14 @@ def _build(description, language, output_path, args, timeout, speak=None, player
         last_output = _run_file(path, args, timeout)
 
         if not _has_error(last_output):
+            attempts_word = plural_ru(attempt, "попытки", "попыток", "попыток")
             msg = (
-                f"Build complete, sir. "
-                f"The code is working after {attempt} attempt{'s' if attempt > 1 else ''}. "
-                f"Saved to {path}."
+                f"Сборка завершена, сэр. "
+                f"Код работает после {attempt} {attempts_word}. "
+                f"Сохранено в {path}."
             )
             if speak: speak(msg)
-            return f"{msg}\n\nOutput:\n{last_output}"
+            return f"{msg}\n\nВывод:\n{last_output}"
 
         print(f"[Code] ⚠️ Error on attempt {attempt}, fixing...")
         if player:
@@ -286,35 +289,35 @@ def _build(description, language, output_path, args, timeout, speak=None, player
             code = _fix_code(code, last_output, description)
             _save_file(path, code)
         except Exception as e:
-            msg = f"Could not fix code on attempt {attempt}: {e}"
+            msg = f"Не удалось исправить код на попытке {attempt}: {e}"
             if speak: speak(msg)
             return msg
 
     msg = (
-        f"I was unable to build a working version after {MAX_BUILD_ATTEMPTS} attempts, sir. "
-        f"The last error was: {last_output[:200]}"
+        f"Сэр, мне не удалось собрать рабочую версию за {MAX_BUILD_ATTEMPTS} попыток. "
+        f"Последняя ошибка: {last_output[:200]}"
     )
     if speak: speak(msg)
-    return f"{msg}\n\nLast code saved to: {path}"
+    return f"{msg}\n\nПоследняя версия кода сохранена в: {path}"
 
 def _write_action(description, language, output_path, player) -> str:
     if not description:
-        return "Please describe what you want me to write, sir."
+        return "Сэр, опишите, что нужно написать."
     if player:
         player.write_log("[Code] Writing code...")
     try:
         code, path = _write(description, language, output_path, player)
         print(f"[Code] ✅ Written: {path}")
-        return f"Code written. Saved to: {path}\n\nPreview:\n{_preview(code)}"
+        return f"Код написан. Сохранён в: {path}\n\nФрагмент:\n{_preview(code)}"
     except Exception as e:
-        return f"Could not generate code: {e}"
+        return f"Не удалось сгенерировать код: {e}"
 
 
 def _edit_action(file_path, instruction, player) -> str:
     if not file_path:
-        return "Please provide a file path to edit, sir."
+        return "Сэр, укажите путь к файлу для редактирования."
     if not instruction:
-        return "Please describe what change to make, sir."
+        return "Сэр, опишите, какое изменение внести."
 
     content, err = _read_file(file_path)
     if err:
@@ -339,11 +342,11 @@ Updated code:"""
         response = model.generate_content(prompt)
         edited   = _clean_code(response.text)
     except Exception as e:
-        return f"Could not edit code: {e}"
+        return f"Не удалось отредактировать код: {e}"
 
     status = _save_file(Path(file_path), edited)
     print(f"[Code] ✅ Edited: {file_path}")
-    return f"File edited. {status}\n\nPreview:\n{_preview(edited)}"
+    return f"Файл отредактирован. {status}\n\nФрагмент:\n{_preview(edited)}"
 
 
 def _explain_action(file_path, code, player) -> str:
@@ -352,7 +355,7 @@ def _explain_action(file_path, code, player) -> str:
         if err:
             return err
     if not code:
-        return "Please provide code or a file path to explain, sir."
+        return "Сэр, укажите код или путь к файлу для разбора."
 
     if player:
         player.write_log("[Code] Analyzing code...")
@@ -371,15 +374,15 @@ Explanation:"""
         response = model.generate_content(prompt)
         return response.text.strip()
     except Exception as e:
-        return f"Could not explain code: {e}"
+        return f"Не удалось объяснить код: {e}"
 
 
 def _run_action(file_path, args, timeout, player) -> str:
     if not file_path:
-        return "Please provide a file path to run, sir."
+        return "Сэр, укажите путь к файлу для запуска."
     p = Path(file_path)
     if not p.exists():
-        return f"File not found: {file_path}"
+        return f"Файл не найден: {file_path}"
     if player:
         player.write_log(f"[Code] Running {p.name}...")
     return _run_file(p, args, timeout)
@@ -392,7 +395,7 @@ def _optimize_action(file_path, code, language, output_path, player) -> str:
         if err:
             return err
     if not code:
-        return "Please provide code or a file path to optimize, sir."
+        return "Сэр, укажите код или путь к файлу для оптимизации."
 
     if player:
         player.write_log("[Code] Optimizing code...")
@@ -418,7 +421,7 @@ Optimized code:"""
         response  = model.generate_content(prompt)
         optimized = _clean_code(response.text)
     except Exception as e:
-        return f"Could not optimize code: {e}"
+        return f"Не удалось оптимизировать код: {e}"
 
     # Kaydet
     if file_path:
@@ -434,10 +437,10 @@ Optimized code:"""
     diff = original_lines - optimized_lines
 
     return (
-        f"Code optimized. {status}\n"
-        f"Lines: {original_lines} → {optimized_lines} "
-        f"({'−' if diff > 0 else '+'}{abs(diff)} lines)\n\n"
-        f"Preview:\n{_preview(optimized)}"
+        f"Код оптимизирован. {status}\n"
+        f"Строк: {original_lines} → {optimized_lines} "
+        f"({'−' if diff > 0 else '+'}{abs(diff)})\n\n"
+        f"Фрагмент:\n{_preview(optimized)}"
     )
 
 
@@ -451,7 +454,7 @@ def _screen_debug_action(description, file_path, player, speak=None) -> str:
 
     screenshot_path = _take_screenshot()
     if not screenshot_path:
-        return "Could not take screenshot, sir. Please make sure PyAutoGUI is installed."
+        return "Сэр, не удалось сделать снимок экрана. Убедитесь, что установлен PyAutoGUI."
 
 
     file_content = ""

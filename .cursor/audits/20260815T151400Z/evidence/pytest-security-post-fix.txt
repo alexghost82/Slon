@@ -1,0 +1,3 @@
+pytest -q tests/security — post-fix
+11 passed
+EXIT:0

@@ -1,0 +1,10 @@
+host_os=27.0
+arch=arm64
+commit=7a9c0f8d93181c950d3d1b02efed5b8ea18d00c9
+branch=integration/main
+dirty=1
+face_png=missing
+settings=present
+api_keys=present_redacted
+xcode_beta=present
+venv_python=Python 3.12.14

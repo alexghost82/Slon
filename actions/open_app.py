@@ -173,7 +173,7 @@ def open_app(
     app_name = (parameters or {}).get("app_name", "").strip()
 
     if not app_name:
-        return "Please specify which application to open, sir."
+        return "Сэр, укажите, какое приложение открыть."
 
     system   = platform.system()
     launcher = _OS_LAUNCHERS.get(system)
@@ -191,18 +191,18 @@ def open_app(
         success = launcher(normalized)
 
         if success:
-            return f"Opened {app_name} successfully, sir."
+            return f"Открыл {app_name}, сэр."
 
         if normalized != app_name:
             success = launcher(app_name)
             if success:
-                return f"Opened {app_name} successfully, sir."
+                return f"Открыл {app_name}, сэр."
 
         return (
-            f"I tried to open {app_name}, sir, but couldn't confirm it launched. "
-            f"It may still be loading or might not be installed."
+            f"Сэр, я попытался открыть {app_name}, но не смог подтвердить запуск. "
+            f"Возможно, приложение ещё загружается или не установлено."
         )
 
     except Exception as e:
         print(f"[open_app] ❌ {e}")
-        return f"Failed to open {app_name}, sir: {e}"
+        return f"Сэр, не удалось открыть {app_name}: {e}"

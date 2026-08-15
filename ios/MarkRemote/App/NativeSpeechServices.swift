@@ -89,7 +89,7 @@ final class NativeSpeechCapturer: NSObject, SpeechCapturing, @unchecked Sendable
         guard speech else { return false }
         #if os(iOS)
         return await withCheckedContinuation { continuation in
-            AVAudioSession.sharedInstance().requestRecordPermission {
+            AVAudioApplication.requestRecordPermission {
                 continuation.resume(returning: $0)
             }
         }

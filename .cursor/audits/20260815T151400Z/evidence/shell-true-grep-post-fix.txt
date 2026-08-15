@@ -1,0 +1,3 @@
+rg 'shell=True' actions/ — post-fix
+NO_MATCHES
+EXIT:0 (no hits)

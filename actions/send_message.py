@@ -188,9 +188,9 @@ def send_message(
     platform     = params.get("platform", "whatsapp").strip().lower()
 
     if not receiver:
-        return "Please specify who to send the message to, sir."
+        return "Сэр, укажите получателя сообщения."
     if not message_text:
-        return "Please specify what message to send, sir."
+        return "Сэр, укажите текст сообщения."
 
     print(f"[SendMessage] 📨 {platform} → {receiver}: {message_text[:40]}")
     if player:

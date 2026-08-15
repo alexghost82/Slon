@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import date
 from pathlib import Path
 
 import psutil
@@ -27,6 +28,10 @@ from PyQt6.QtWidgets import (
     QMainWindow, QPushButton, QScrollArea, QSizePolicy, QTextEdit,
     QVBoxLayout, QWidget, QProgressBar,
 )
+
+from localization import tr
+from localization.ru_locale import format_datetime_ru
+from localization.translator import get_locale
 
 # Local Piper TTS + Desktop Control API + runtime bridge (Wave 12/13)
 try:
@@ -79,6 +84,18 @@ def resolve_unmute_hud_state(*, awake: bool, speaking: bool = False) -> str:
     if speaking:
         return "SPEAKING"
     return "LISTENING" if awake else "STANDBY"
+
+
+def sys_line(key: str, **kwargs: object) -> str:
+    """Return a localized activity-log line carrying the SYS tag."""
+    return f"{tr('log.prefix_system')} {tr(key, **kwargs)}"
+
+
+def _today_label() -> str:
+    """Header date in the active locale; ``strftime`` has no Russian month names."""
+    if get_locale() == "ru":
+        return format_datetime_ru(date.today())
+    return time.strftime("%a %d %b %Y")
 
 
 class C:
@@ -278,18 +295,18 @@ class _SysMetrics:
 
 _metrics = _SysMetrics()
 
-# One-shot operator notice when face art is absent (no per-frame spam).
-_FACE_MISSING_SYS = "SYS: face.png missing; using geometric HUD"
-
 
 def face_missing_sys_notice(path: str) -> str | None:
-    """Return the SYS line when ``path`` is not a file; else None."""
+    """Return the SYS line when ``path`` is not a file; else None.
+
+    One-shot operator notice when face art is absent (no per-frame spam).
+    """
     try:
         if Path(path).is_file():
             return None
     except OSError:
         pass
-    return _FACE_MISSING_SYS
+    return sys_line("log.face_missing")
 
 
 class HudCanvas(QWidget):
@@ -521,21 +538,24 @@ class HudCanvas(QWidget):
         # status text
         sy = cy + fw * 0.40
         if self.muted:
-            txt, col = "⊘  MUTED",     qcol(C.MUTED_C)
+            txt, col = f"⊘  {tr('hud.muted')}",    qcol(C.MUTED_C)
         elif self.speaking:
-            txt, col = "●  SPEAKING",  qcol(C.ACC)
+            txt, col = f"●  {tr('hud.speaking')}", qcol(C.ACC)
         elif self.state == "THINKING":
             sym = "◈" if self._blink else "◇"
-            txt, col = f"{sym}  THINKING",   qcol(C.ACC2)
+            txt, col = f"{sym}  {tr('hud.thinking')}",   qcol(C.ACC2)
         elif self.state == "PROCESSING":
             sym = "▷" if self._blink else "▶"
-            txt, col = f"{sym}  PROCESSING", qcol(C.ACC2)
+            txt, col = f"{sym}  {tr('hud.processing')}", qcol(C.ACC2)
         elif self.state == "STANDBY":
             sym = "◇" if self._blink else "◆"
-            txt, col = f"{sym}  SAY SLON", qcol(C.PRI)
+            txt, col = f"{sym}  {tr('hud.standby')}", qcol(C.PRI)
         elif self.state == "LISTENING":
             sym = "●" if self._blink else "○"
-            txt, col = f"{sym}  LISTENING",  qcol(C.GREEN)
+            txt, col = f"{sym}  {tr('hud.listening')}",  qcol(C.GREEN)
+        elif self.state == "INITIALISING":
+            sym = "●" if self._blink else "○"
+            txt, col = f"{sym}  {tr('hud.initialising')}", qcol(C.PRI)
         else:
             sym = "●" if self._blink else "○"
             txt, col = f"{sym}  {self.state}", qcol(C.PRI)
@@ -613,6 +633,33 @@ class MetricBar(QWidget):
         p.setPen(QPen(bar_col if self._text != "--" else qcol(C.TEXT_DIM), 1))
         p.drawText(QRectF(0, 4, W - 6, 16), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, self._text)
 
+# Pre-i18n prefixes still reach the log from unported call sites and old sessions.
+_LEGACY_LOG_PREFIXES: tuple[tuple[str, str], ...] = (
+    ("you:", "you"),
+    ("slon:", "ai"),
+    ("jarvis:", "ai"),
+    ("file:", "file"),
+)
+
+
+def log_tag_for(text: str) -> str:
+    """Classify an activity-log line for colouring in the active locale."""
+    lowered = text.lower()
+    localized = (
+        (tr("log.prefix_user_stt"), "you"),
+        (tr("log.prefix_user"), "you"),
+        (tr("log.prefix_assistant"), "ai"),
+        (tr("log.prefix_file"), "file"),
+        (tr("log.prefix_error"), "err"),
+    )
+    for prefix, tag in localized + _LEGACY_LOG_PREFIXES:
+        if lowered.startswith(prefix.lower()):
+            return tag
+    if "err" in lowered:
+        return "err"
+    return "sys"
+
+
 class LogWidget(QTextEdit):
     _sig = pyqtSignal(str)
 
@@ -664,12 +711,7 @@ class LogWidget(QTextEdit):
         self._typing = True
         self._text   = self._queue.pop(0)
         self._pos    = 0
-        tl = self._text.lower()
-        if   tl.startswith("you:"):    self._tag = "you"
-        elif tl.startswith(("slon:", "jarvis:")): self._tag = "ai"
-        elif tl.startswith("file:"):   self._tag = "file"
-        elif "err" in tl:              self._tag = "err"
-        else:                          self._tag = "sys"
+        self._tag    = log_tag_for(self._text)
         self._tmr.start(6)
 
     def _step(self):
@@ -792,16 +834,21 @@ class FileDropZone(QWidget):
         self._current_file = None; self._canvas.update()
 
     def _browse(self):
+        filters = ";;".join(
+            f"{tr(key)} ({patterns})"
+            for key, patterns in (
+                ("file.filter_all", "*.*"),
+                ("file.filter_images", "*.jpg *.jpeg *.png *.gif *.webp *.bmp *.svg"),
+                ("file.filter_documents", "*.pdf *.docx *.txt *.md *.pptx"),
+                ("file.filter_data", "*.csv *.xlsx *.json *.xml"),
+                ("file.filter_code", "*.py *.js *.ts *.html *.css *.java *.cpp *.go"),
+                ("file.filter_audio", "*.mp3 *.wav *.ogg *.m4a *.aac *.flac"),
+                ("file.filter_video", "*.mp4 *.avi *.mov *.mkv *.wmv *.webm"),
+                ("file.filter_archives", "*.zip *.rar *.tar *.gz *.7z"),
+            )
+        )
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select a file for Slon", str(Path.home()),
-            "All Files (*.*);;"
-            "Images (*.jpg *.jpeg *.png *.gif *.webp *.bmp *.svg);;"
-            "Documents (*.pdf *.docx *.txt *.md *.pptx);;"
-            "Data (*.csv *.xlsx *.json *.xml);;"
-            "Code (*.py *.js *.ts *.html *.css *.java *.cpp *.go);;"
-            "Audio (*.mp3 *.wav *.ogg *.m4a *.aac *.flac);;"
-            "Video (*.mp4 *.avi *.mov *.mkv *.wmv *.webm);;"
-            "Archives (*.zip *.rar *.tar *.gz *.7z)",
+            self, tr("file.dialog_title"), str(Path.home()), filters
         )
         if path:
             self._set_file(path)
@@ -854,11 +901,11 @@ class _DropCanvas(QWidget):
         p.setFont(QFont("Courier New", 8))
         p.setPen(QPen(qcol(C.PRI_DIM if not hover else C.TEXT), 1))
         p.drawText(QRectF(0, cy + 8, W, 16), Qt.AlignmentFlag.AlignCenter,
-                   "Drop file here  or  Click to Browse")
+                   tr("file.drop_hint"))
         p.setFont(QFont("Courier New", 7))
         p.setPen(QPen(qcol("#1a4a5a"), 1))
         p.drawText(QRectF(0, cy + 24, W, 14), Qt.AlignmentFlag.AlignCenter,
-                   "Images · Video · Audio · PDF · Docs · Code · Data")
+                   tr("file.drop_types"))
 
     def _paint_drag_over(self, p, W, H):
         cx, cy = W / 2, H / 2
@@ -867,14 +914,15 @@ class _DropCanvas(QWidget):
         p.drawText(QRectF(0, cy - 24, W, 32), Qt.AlignmentFlag.AlignCenter, "⬇")
         p.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
         p.setPen(QPen(qcol(C.PRI), 1))
-        p.drawText(QRectF(0, cy + 12, W, 16), Qt.AlignmentFlag.AlignCenter, "Release to load")
+        p.drawText(QRectF(0, cy + 12, W, 16), Qt.AlignmentFlag.AlignCenter,
+                   tr("file.drop_release"))
 
     def _paint_file(self, p, W, H):
         path = Path(self._z._current_file)
         cat  = _file_category(path)
         icon, icon_col = _FILE_ICONS.get(cat, _FILE_ICONS["unknown"])
         size_str = _fmt_size(path.stat().st_size)
-        ext_str  = path.suffix.upper().lstrip(".") or "FILE"
+        ext_str  = path.suffix.upper().lstrip(".") or tr("file.generic_kind")
 
         block_x, block_w = 10, 60
         p.setFont(QFont("Segoe UI Emoji", 22) if _OS == "Windows" else QFont("Arial", 22))
@@ -947,15 +995,15 @@ class SetupOverlay(QWidget):
             w.setStyleSheet(f"color: {color}; background: transparent;")
             return w
 
-        layout.addWidget(_lbl("◈  INITIALISATION REQUIRED", 13, True))
-        layout.addWidget(_lbl("Configure Slon before first boot.", 9, color=C.PRI_DIM))
+        layout.addWidget(_lbl(f"◈  {tr('setup.title').upper()}", 13, True))
+        layout.addWidget(_lbl(tr("setup.subtitle"), 9, color=C.PRI_DIM))
         layout.addSpacing(6)
 
         sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
         sep.setStyleSheet(f"color: {C.BORDER};"); layout.addWidget(sep)
         layout.addSpacing(4)
 
-        layout.addWidget(_lbl("GEMINI API KEY", 8, color=C.TEXT_DIM,
+        layout.addWidget(_lbl(tr("setup.gemini_key").upper(), 8, color=C.TEXT_DIM,
                                align=Qt.AlignmentFlag.AlignLeft))
         self._key_input = QLineEdit()
         self._key_input.setEchoMode(QLineEdit.EchoMode.Password)
@@ -972,7 +1020,7 @@ class SetupOverlay(QWidget):
         layout.addWidget(self._key_input)
         layout.addSpacing(8)
 
-        layout.addWidget(_lbl("OPENROUTER API KEY", 8, color=C.TEXT_DIM,
+        layout.addWidget(_lbl(tr("setup.openrouter_key").upper(), 8, color=C.TEXT_DIM,
                        align=Qt.AlignmentFlag.AlignLeft))
         self._or_input = QLineEdit()
         self._or_input.setEchoMode(QLineEdit.EchoMode.Password)
@@ -994,10 +1042,10 @@ class SetupOverlay(QWidget):
         sep2.setStyleSheet(f"color: {C.BORDER};"); layout.addWidget(sep2)
         layout.addSpacing(4)
 
-        layout.addWidget(_lbl("OPERATING SYSTEM", 8, color=C.TEXT_DIM,
+        layout.addWidget(_lbl(tr("setup.os").upper(), 8, color=C.TEXT_DIM,
                                align=Qt.AlignmentFlag.AlignLeft))
         det_name = {"windows": "Windows", "mac": "macOS", "linux": "Linux"}[detected]
-        layout.addWidget(_lbl(f"Auto-detected: {det_name}", 8, color=C.ACC2,
+        layout.addWidget(_lbl(tr("setup.os_detected", name=det_name), 8, color=C.ACC2,
                                align=Qt.AlignmentFlag.AlignLeft))
 
         os_row = QHBoxLayout(); os_row.setSpacing(6)
@@ -1014,7 +1062,7 @@ class SetupOverlay(QWidget):
         self._sel(detected)
         layout.addSpacing(12)
 
-        init_btn = QPushButton("▸  INITIALISE SYSTEMS")
+        init_btn = QPushButton(f"▸  {tr('setup.initialise').upper()}")
         init_btn.setFont(QFont("Courier New", 10, QFont.Weight.Bold))
         init_btn.setFixedHeight(36)
         init_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1076,7 +1124,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self, face_path: str):
         super().__init__()
-        self.setWindowTitle("Slon")
+        self.setWindowTitle(tr("window.title"))
         self.setMinimumSize(_MIN_W, _MIN_H)
         self.resize(_DEFAULT_W, _DEFAULT_H)
 
@@ -1093,11 +1141,11 @@ class MainWindow(QMainWindow):
         self._local_tts_provider = None
         self._local_tts_ready = False
         self._local_tts_enabled = False
-        self._local_tts_message = "Local TTS not initialised"
+        self._local_tts_message = tr("runtime.tts_not_initialised")
         self._local_stt_provider = None
         self._local_stt_mic = None
         self._local_stt_ready = False
-        self._local_stt_message = "Local STT not initialised"
+        self._local_stt_message = tr("runtime.stt_not_initialised")
         self._desktop_listener = None
         self._desktop_tls = False
         self._runtime_stack = None
@@ -1214,7 +1262,7 @@ class MainWindow(QMainWindow):
         if gpu >= 0:
             self._bar_gpu.set_value(gpu, f"{gpu:.0f}%")
         else:
-            self._bar_gpu.set_value(0, "N/A")
+            self._bar_gpu.set_value(0, tr("metric.not_available"))
 
         # TMP
         tmp = snap["tmp"]
@@ -1222,22 +1270,22 @@ class MainWindow(QMainWindow):
             tmp_pct = min(100, (tmp / 100) * 100)
             self._bar_tmp.set_value(tmp_pct, f"{tmp:.0f}°C")
         else:
-            self._bar_tmp.set_value(0, "N/A")
+            self._bar_tmp.set_value(0, tr("metric.not_available"))
 
         try:
             boot_t  = psutil.boot_time()
             elapsed = time.time() - boot_t
             h = int(elapsed // 3600)
             m = int((elapsed % 3600) // 60)
-            self._uptime_lbl.setText(f"UP  {h:02d}:{m:02d}")
+            self._uptime_lbl.setText(tr("metric.uptime", value=f"{h:02d}:{m:02d}"))
         except Exception:
-            self._uptime_lbl.setText("UP  --:--")
+            self._uptime_lbl.setText(tr("metric.uptime", value="--:--"))
 
         try:
             proc_count = len(psutil.pids())
-            self._proc_lbl.setText(f"PROC  {proc_count}")
+            self._proc_lbl.setText(tr("metric.process_count", value=proc_count))
         except Exception:
-            self._proc_lbl.setText("PROC  --")
+            self._proc_lbl.setText(tr("metric.process_count", value="--"))
 
         plane = getattr(self, "_control_plane", None)
         if plane is not None:
@@ -1269,16 +1317,16 @@ class MainWindow(QMainWindow):
             l.setStyleSheet(f"color: {color}; background: transparent;")
             return l
 
-        lay.addWidget(_badge("Slon", C.PRI_DIM))
+        lay.addWidget(_badge(tr("window.title"), C.PRI_DIM))
         lay.addStretch()
 
         mid = QVBoxLayout(); mid.setSpacing(1)
-        title = QLabel("Slon")
+        title = QLabel(tr("window.title"))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setFont(QFont("Courier New", 17, QFont.Weight.Bold))
         title.setStyleSheet(f"color: {C.PRI}; background: transparent;")
         mid.addWidget(title)
-        sub = QLabel("Personal AI Assistant")
+        sub = QLabel(tr("window.subtitle"))
         sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
         sub.setFont(QFont("Courier New", 7))
         sub.setStyleSheet(f"color: {C.PRI_DIM}; background: transparent;")
@@ -1302,7 +1350,7 @@ class MainWindow(QMainWindow):
 
     def _tick_clock(self):
         self._clock_lbl.setText(time.strftime("%H:%M:%S"))
-        self._date_lbl.setText(time.strftime("%a %d %b %Y"))
+        self._date_lbl.setText(_today_label())
 
     def _build_left_panel(self) -> QWidget:
         w = QWidget()
@@ -1312,7 +1360,7 @@ class MainWindow(QMainWindow):
         lay.setContentsMargins(8, 10, 8, 10)
         lay.setSpacing(6)
 
-        hdr = QLabel("◈ SYS MONITOR")
+        hdr = QLabel(f"◈ {tr('panel.sys_monitor')}")
         hdr.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
         hdr.setStyleSheet(f"color: {C.PRI}; background: transparent; "
                           f"border-bottom: 1px solid {C.BORDER}; padding-bottom: 4px;")
@@ -1339,18 +1387,18 @@ class MainWindow(QMainWindow):
         ip_lay.setContentsMargins(6, 5, 6, 5)
         ip_lay.setSpacing(3)
 
-        self._uptime_lbl = QLabel("UP  --:--")
+        self._uptime_lbl = QLabel(tr("metric.uptime", value="--:--"))
         self._uptime_lbl.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
         self._uptime_lbl.setStyleSheet(f"color: {C.GREEN}; background: transparent; border: none;")
         ip_lay.addWidget(self._uptime_lbl)
 
-        self._proc_lbl = QLabel("PROC  --")
+        self._proc_lbl = QLabel(tr("metric.process_count", value="--"))
         self._proc_lbl.setFont(QFont("Courier New", 8))
         self._proc_lbl.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent; border: none;")
         ip_lay.addWidget(self._proc_lbl)
 
         os_name = {"Windows": "WIN", "Darwin": "macOS", "Linux": "LINUX"}.get(_OS, _OS.upper())
-        os_lbl = QLabel(f"OS  {os_name}")
+        os_lbl = QLabel(tr("metric.os", value=os_name))
         os_lbl.setFont(QFont("Courier New", 8))
         os_lbl.setStyleSheet(f"color: {C.ACC2}; background: transparent; border: none;")
         ip_lay.addWidget(os_lbl)
@@ -1359,9 +1407,9 @@ class MainWindow(QMainWindow):
         lay.addStretch()
 
         for txt, col in [
-            ("AI CORE\nACTIVE",     C.GREEN),
-            ("SEC\nCLEARED",        C.PRI),
-            ("PROTOCOL\nXXXVIII",   C.TEXT_DIM),
+            (tr("badge.ai_core"),  C.GREEN),
+            (tr("badge.security"), C.PRI),
+            (tr("badge.protocol"), C.TEXT_DIM),
         ]:
             lbl = QLabel(txt)
             lbl.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
@@ -1387,7 +1435,7 @@ class MainWindow(QMainWindow):
             l.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
             return l
 
-        lay.addWidget(_sec("ACTIVITY LOG"))
+        lay.addWidget(_sec(tr("panel.activity_log")))
         self._log = LogWidget()
         lay.addWidget(self._log, stretch=1)
 
@@ -1395,12 +1443,12 @@ class MainWindow(QMainWindow):
         sep.setStyleSheet(f"color: {C.BORDER}; margin: 2px 0;")
         lay.addWidget(sep)
 
-        lay.addWidget(_sec("FILE UPLOAD"))
+        lay.addWidget(_sec(tr("panel.file_upload")))
         self._drop_zone = FileDropZone()
         self._drop_zone.file_selected.connect(self._on_file_selected)
         lay.addWidget(self._drop_zone)
 
-        self._file_hint = QLabel("No file loaded — drop or click above to upload")
+        self._file_hint = QLabel(tr("file.none_loaded"))
         self._file_hint.setFont(QFont("Courier New", 7))
         self._file_hint.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
         self._file_hint.setWordWrap(True)
@@ -1410,10 +1458,10 @@ class MainWindow(QMainWindow):
         sep2.setStyleSheet(f"color: {C.BORDER}; margin: 2px 0;")
         lay.addWidget(sep2)
 
-        lay.addWidget(_sec("COMMAND INPUT"))
+        lay.addWidget(_sec(tr("panel.command_input")))
         lay.addLayout(self._build_input_row())
 
-        self._mute_btn = QPushButton("🎙  MICROPHONE ACTIVE")
+        self._mute_btn = QPushButton(f"🎙  {tr('button.mic_active')}")
         self._mute_btn.setFixedHeight(30)
         self._mute_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
         self._mute_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1421,7 +1469,7 @@ class MainWindow(QMainWindow):
         self._style_mute_btn()
         lay.addWidget(self._mute_btn)
 
-        self._tts_btn = QPushButton("🗣  LOCAL TTS OFF")
+        self._tts_btn = QPushButton(f"🗣  {tr('button.tts_off')}")
         self._tts_btn.setFixedHeight(26)
         self._tts_btn.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
         self._tts_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1429,7 +1477,7 @@ class MainWindow(QMainWindow):
         self._style_tts_btn()
         lay.addWidget(self._tts_btn)
 
-        self._stt_btn = QPushButton("🎤  LOCAL STT LISTEN")
+        self._stt_btn = QPushButton(f"🎤  {tr('button.stt_listen')}")
         self._stt_btn.setFixedHeight(26)
         self._stt_btn.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
         self._stt_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1437,7 +1485,7 @@ class MainWindow(QMainWindow):
         self._style_stt_btn()
         lay.addWidget(self._stt_btn)
 
-        self._api_btn = QPushButton("📡  DESKTOP API OFF")
+        self._api_btn = QPushButton(f"📡  {tr('button.api_off')}")
         self._api_btn.setFixedHeight(26)
         self._api_btn.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
         self._api_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1445,7 +1493,7 @@ class MainWindow(QMainWindow):
         self._style_api_btn()
         lay.addWidget(self._api_btn)
 
-        fs_btn = QPushButton("⛶  FULLSCREEN  [F11]")
+        fs_btn = QPushButton(f"⛶  {tr('button.fullscreen')}")
         fs_btn.setFixedHeight(26)
         fs_btn.setFont(QFont("Courier New", 7))
         fs_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1466,7 +1514,7 @@ class MainWindow(QMainWindow):
     def _build_input_row(self) -> QHBoxLayout:
         row = QHBoxLayout(); row.setSpacing(5)
         self._input = QLineEdit()
-        self._input.setPlaceholderText("Type a command or question…")
+        self._input.setPlaceholderText(tr("input.placeholder"))
         self._input.setFont(QFont("Courier New", 9))
         self._input.setFixedHeight(30)
         self._input.setStyleSheet(f"""
@@ -1505,31 +1553,28 @@ class MainWindow(QMainWindow):
             l.setStyleSheet(f"color: {color}; background: transparent;")
             return l
 
-        lay.addWidget(_fl("[F4] Mute  ·  [F11] Fullscreen"))
+        lay.addWidget(_fl(tr("footer.shortcuts")))
         lay.addStretch()
-        lay.addWidget(_fl("Slon  ·  CLASSIFIED"))
+        lay.addWidget(_fl(tr("footer.classification")))
         lay.addStretch()
-        lay.addWidget(_fl("© STARK INDUSTRIES", C.PRI_DIM))
+        lay.addWidget(_fl(tr("footer.copyright"), C.PRI_DIM))
         return w
 
     def _init_local_tts(self) -> None:
         if try_build_local_tts is None:
             self._local_tts_ready = False
             self._local_tts_provider = None
-            self._local_tts_message = "Local TTS module unavailable"
+            self._local_tts_message = tr("runtime.tts_module_unavailable")
             return
         result = try_build_local_tts(repo_root=BASE_DIR)
         self._local_tts_provider = result.provider
         self._local_tts_ready = bool(result.ready and result.provider is not None)
         self._local_tts_message = result.message
         if self._local_tts_ready:
-            self._log_sig.emit(f"SYS: {result.message}")
+            self._log_sig.emit(f"{tr('log.prefix_system')} {result.message}")
         else:
-            self._log_sig.emit(f"SYS: Local TTS unavailable — {result.message}")
-            self._log_sig.emit(
-                "SYS: Opt-in voice download: "
-                "python -m speech.tts download --consent"
-            )
+            self._log_sig.emit(sys_line("log.tts_unavailable", error=result.message))
+            self._log_sig.emit(sys_line("log.tts_download_hint"))
         self._style_tts_btn()
 
     def _init_local_stt(self) -> None:
@@ -1537,7 +1582,7 @@ class MainWindow(QMainWindow):
             self._local_stt_ready = False
             self._local_stt_provider = None
             self._local_stt_mic = None
-            self._local_stt_message = "Local STT module unavailable"
+            self._local_stt_message = tr("runtime.stt_module_unavailable")
             self._style_stt_btn()
             return
 
@@ -1563,14 +1608,14 @@ class MainWindow(QMainWindow):
         self._local_stt_mic = result.mic
         self._local_stt_ready = bool(result.ready and result.provider is not None)
         self._local_stt_message = result.message
-        self._log_sig.emit(f"SYS: Local STT — {result.message}")
+        self._log_sig.emit(sys_line("log.stt_status", message=result.message))
         self._style_stt_btn()
 
     def _style_stt_btn(self) -> None:
         if not hasattr(self, "_stt_btn"):
             return
         if self._local_stt_ready:
-            self._stt_btn.setText("🎤  LOCAL STT LISTEN")
+            self._stt_btn.setText(f"🎤  {tr('button.stt_listen')}")
             self._stt_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: transparent; color: {C.TEXT_MED};
@@ -1580,7 +1625,7 @@ class MainWindow(QMainWindow):
             """)
             self._stt_btn.setEnabled(True)
         else:
-            self._stt_btn.setText("🎤  LOCAL STT N/A")
+            self._stt_btn.setText(f"🎤  {tr('button.stt_unavailable')}")
             self._stt_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: transparent; color: {C.TEXT_DIM};
@@ -1595,10 +1640,10 @@ class MainWindow(QMainWindow):
 
     def _listen_local_stt(self) -> None:
         if not self._local_stt_ready or self._local_stt_provider is None:
-            self._log.append_log(f"SYS: {self._local_stt_message}")
+            self._log.append_log(f"{tr('log.prefix_system')} {self._local_stt_message}")
             return
         if self._local_stt_mic is None:
-            self._log.append_log("SYS: Microphone unavailable for local STT.")
+            self._log.append_log(sys_line("log.stt_mic_unavailable"))
             return
         provider = self._local_stt_provider
         mic = self._local_stt_mic
@@ -1610,12 +1655,12 @@ class MainWindow(QMainWindow):
                 from speech.stt.provider import PROVIDER_ID
 
                 self._state_sig.emit("LISTENING")
-                self._log_sig.emit("SYS: Local STT recording 3s…")
+                self._log_sig.emit(sys_line("log.stt_recording"))
                 clip = mic.record(3.0)
                 model = ModelInfo(
                     provider_id=PROVIDER_ID,
                     model_id="local-stt",
-                    display_name="Local STT",
+                    display_name=tr("runtime.stt_display_name"),
                     audio_input=True,
                     local=True,
                 )
@@ -1624,14 +1669,12 @@ class MainWindow(QMainWindow):
                 )
                 text = (transcript.text or "").strip()
                 if text:
-                    self._log_sig.emit(f"YOU (STT): {text}")
+                    self._log_sig.emit(f"{tr('log.prefix_user_stt')} {text}")
                     self._stt_text_sig.emit(text)
                 else:
-                    self._log_sig.emit(
-                        "SYS: Local STT empty (install openai-whisper for offline ASR)."
-                    )
+                    self._log_sig.emit(sys_line("log.stt_empty"))
             except Exception as exc:
-                self._log_sig.emit(f"SYS: Local STT error — {exc}")
+                self._log_sig.emit(sys_line("log.stt_error", error=exc))
             finally:
                 if not self._muted:
                     self._state_sig.emit("LISTENING")
@@ -1641,7 +1684,7 @@ class MainWindow(QMainWindow):
     def _init_runtime_bridge(self) -> None:
         if build_runtime_stack is None:
             self._runtime_stack = None
-            self._log_sig.emit("SYS: runtime bridge unavailable")
+            self._log_sig.emit(sys_line("log.bridge_unavailable"))
             return
         try:
             def _keys(name: str) -> str | None:
@@ -1660,10 +1703,10 @@ class MainWindow(QMainWindow):
             )
             self._runtime_stack = stack
             for line in stack.summary_lines()[:12]:
-                self._log_sig.emit(f"SYS: bridge {line}")
+                self._log_sig.emit(sys_line("log.bridge_line", line=line))
         except Exception as exc:
             self._runtime_stack = None
-            self._log_sig.emit(f"SYS: runtime bridge failed — {exc}")
+            self._log_sig.emit(sys_line("log.bridge_failed", error=exc))
 
     def _init_control_plane(self) -> None:
         self._control_plane = None
@@ -1690,26 +1733,26 @@ class MainWindow(QMainWindow):
             plane.bind_command("listen_stt", self._listen_local_stt)
             self._control_plane = plane
         except Exception as exc:
-            self._log_sig.emit(f"SYS: control plane unavailable — {exc}")
+            self._log_sig.emit(sys_line("log.control_plane_unavailable", error=exc))
 
     def _remote_start(self) -> None:
         self._set_muted(False)
-        self._log_sig.emit("SYS: Remote requested runtime start.")
+        self._log_sig.emit(sys_line("log.remote_start"))
 
     def _remote_pause(self) -> None:
         self._set_muted(True)
-        self._log_sig.emit("SYS: Remote paused microphone input.")
+        self._log_sig.emit(sys_line("log.remote_pause"))
 
     def _remote_stop(self) -> None:
         self._set_muted(True)
         self._state_sig.emit("PROCESSING")
-        self._log_sig.emit("SYS: Remote stopped the active input session.")
+        self._log_sig.emit(sys_line("log.remote_stop"))
 
     def _style_tts_btn(self) -> None:
         if not hasattr(self, "_tts_btn"):
             return
         if self._local_tts_enabled and self._local_tts_ready:
-            self._tts_btn.setText("🗣  LOCAL TTS ON")
+            self._tts_btn.setText(f"🗣  {tr('button.tts_on')}")
             self._tts_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: #00140a; color: {C.GREEN};
@@ -1717,7 +1760,7 @@ class MainWindow(QMainWindow):
                 }}
             """)
         elif self._local_tts_ready:
-            self._tts_btn.setText("🗣  LOCAL TTS OFF")
+            self._tts_btn.setText(f"🗣  {tr('button.tts_off')}")
             self._tts_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: transparent; color: {C.TEXT_MED};
@@ -1726,7 +1769,7 @@ class MainWindow(QMainWindow):
                 QPushButton:hover {{ color: {C.PRI}; border: 1px solid {C.BORDER_B}; }}
             """)
         else:
-            self._tts_btn.setText("🗣  LOCAL TTS N/A")
+            self._tts_btn.setText(f"🗣  {tr('button.tts_unavailable')}")
             self._tts_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: transparent; color: {C.TEXT_DIM};
@@ -1736,13 +1779,14 @@ class MainWindow(QMainWindow):
 
     def _toggle_local_tts(self) -> None:
         if not self._local_tts_ready:
-            self._log.append_log(f"SYS: {self._local_tts_message}")
+            self._log.append_log(f"{tr('log.prefix_system')} {self._local_tts_message}")
             self._style_tts_btn()
             return
         self._local_tts_enabled = not self._local_tts_enabled
         self._style_tts_btn()
-        state = "enabled" if self._local_tts_enabled else "disabled"
-        self._log_sig.emit(f"SYS: Local Piper TTS {state}.")
+        self._log_sig.emit(
+            sys_line("log.tts_enabled" if self._local_tts_enabled else "log.tts_disabled")
+        )
         plane = getattr(self, "_control_plane", None)
         if plane is not None:
             plane.update_state(local_tts_enabled=self._local_tts_enabled)
@@ -1753,8 +1797,12 @@ class MainWindow(QMainWindow):
         listening = bool(self._desktop_listener and self._desktop_listener.listening)
         if listening:
             addr = self._desktop_listener.address
-            label = f"📡  API {addr[0]}:{addr[1]}" if addr else "📡  DESKTOP API ON"
-            self._api_btn.setText(label)
+            label = (
+                tr("button.api_address", host=addr[0], port=addr[1])
+                if addr
+                else tr("button.api_on")
+            )
+            self._api_btn.setText(f"📡  {label}")
             self._api_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: #001a22; color: {C.PRI};
@@ -1762,7 +1810,7 @@ class MainWindow(QMainWindow):
                 }}
             """)
         else:
-            self._api_btn.setText("📡  DESKTOP API OFF")
+            self._api_btn.setText(f"📡  {tr('button.api_off')}")
             self._api_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: transparent; color: {C.TEXT_MED};
@@ -1773,14 +1821,14 @@ class MainWindow(QMainWindow):
 
     def _toggle_desktop_api(self) -> None:
         if DesktopControlListener is None:
-            self._log.append_log("SYS: Desktop Control listener unavailable.")
+            self._log.append_log(sys_line("log.api_listener_unavailable"))
             return
         if self._desktop_listener and self._desktop_listener.listening:
             self._desktop_listener.stop()
             self._desktop_listener = None
             self._desktop_tls = False
             self._style_api_btn()
-            self._log.append_log("SYS: Desktop Control API stopped.")
+            self._log.append_log(sys_line("log.api_stopped"))
             return
         try:
             tls_cert = None
@@ -1813,20 +1861,19 @@ class MainWindow(QMainWindow):
             self._style_api_btn()
             scheme = listener.scheme
             self._log.append_log(
-                f"SYS: Desktop Control API listening on {scheme}://{host}:{port}/v1 "
-                f"(loopback; auth/pairing required; tls={listener.tls_enabled})."
+                sys_line(
+                    "log.api_listening",
+                    url=f"{scheme}://{host}:{port}/v1",
+                    tls=listener.tls_enabled,
+                )
             )
             if not use_tls:
-                self._log.append_log(
-                    "SYS: TLS optional — "
-                    "python -m server --tls --tls-generate  "
-                    "(see docs/audit/tls-lan.md)"
-                )
+                self._log.append_log(sys_line("log.api_tls_hint"))
         except Exception as exc:
             self._desktop_listener = None
             self._desktop_tls = False
             self._style_api_btn()
-            self._log.append_log(f"SYS: Desktop API start failed — {exc}")
+            self._log.append_log(sys_line("log.api_start_failed", error=exc))
 
     def speak_local(self, text: str) -> None:
         """Synthesize with Piper when local TTS is enabled; no-op otherwise."""
@@ -1844,7 +1891,7 @@ class MainWindow(QMainWindow):
                 if play_wav_bytes is not None and audio.data:
                     play_wav_bytes(audio.data)
             except Exception as exc:
-                self._log_sig.emit(f"SYS: Local TTS error — {exc}")
+                self._log_sig.emit(sys_line("log.tts_error", error=exc))
             finally:
                 if not self._muted:
                     self._state_sig.emit("LISTENING")
@@ -1857,8 +1904,12 @@ class MainWindow(QMainWindow):
         cat  = _file_category(p)
         icon, _ = _FILE_ICONS.get(cat, _FILE_ICONS["unknown"])
         size = _fmt_size(p.stat().st_size)
-        self._file_hint.setText(f"{icon}  {p.name}  ·  {size}  ·  Tell Slon what to do with it")
-        self._log_sig.emit(f"FILE: {p.name} ({size}) loaded")
+        self._file_hint.setText(
+            tr("file.loaded_hint", icon=icon, name=p.name, size=size)
+        )
+        self._log_sig.emit(
+            f"{tr('log.prefix_file')} {tr('file.loaded_log', name=p.name, size=size)}"
+        )
         if self.on_text_command:
             msg = (
                 f"[FILE_UPLOADED] path={path} | name={p.name} | "
@@ -1878,12 +1929,12 @@ class MainWindow(QMainWindow):
         self._style_mute_btn()
         if self._muted:
             self._apply_state("MUTED")
-            self._log_sig.emit("SYS: Microphone muted.")
+            self._log_sig.emit(sys_line("log.mic_muted"))
         else:
             # Do not force LISTENING — standby must stay SAY SLON until wake.
             if self.on_mute_changed is None:
                 self._apply_state(resolve_unmute_hud_state(awake=False))
-            self._log_sig.emit("SYS: Microphone active.")
+            self._log_sig.emit(sys_line("log.mic_active"))
         plane = getattr(self, "_control_plane", None)
         if plane is not None:
             plane.update_state(mic_active=not self._muted)
@@ -1895,7 +1946,7 @@ class MainWindow(QMainWindow):
 
     def _style_mute_btn(self):
         if self._muted:
-            self._mute_btn.setText("🔇  MICROPHONE MUTED")
+            self._mute_btn.setText(f"🔇  {tr('button.mic_muted')}")
             self._mute_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: #140006; color: {C.MUTED_C};
@@ -1903,7 +1954,7 @@ class MainWindow(QMainWindow):
                 }}
             """)
         else:
-            self._mute_btn.setText("🎙  MICROPHONE ACTIVE")
+            self._mute_btn.setText(f"🎙  {tr('button.mic_active')}")
             self._mute_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: #00140a; color: {C.GREEN};
@@ -1916,7 +1967,7 @@ class MainWindow(QMainWindow):
         txt = self._input.text().strip()
         if not txt: return
         self._input.clear()
-        self._log_sig.emit(f"You: {txt}")
+        self._log_sig.emit(f"{tr('log.prefix_user')} {txt}")
         if self.on_text_command:
             threading.Thread(target=self.on_text_command, args=(txt,), daemon=True).start()
 
@@ -1973,7 +2024,7 @@ class MainWindow(QMainWindow):
             self._overlay = None
         # First-run: wait for wake word (Live will re-assert on connect).
         self._apply_state("STANDBY")
-        self._log_sig.emit(f"SYS: Initialised. OS={os_name.upper()}. Slon online.")
+        self._log_sig.emit(sys_line("log.initialised", os=os_name.upper()))
 
 class _RootShim:
     def __init__(self, app: QApplication):

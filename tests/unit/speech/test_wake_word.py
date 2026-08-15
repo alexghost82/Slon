@@ -64,11 +64,15 @@ def test_ui_resolve_unmute_hud_state_matches_contract() -> None:
     tree = ast.parse((ROOT / "ui.py").read_text(encoding="utf-8"))
     fn = None
     for node in tree.body:
-        if isinstance(node, ast.FunctionDef) and node.name == "resolve_unmute_hud_state":
+        if (
+            isinstance(node, ast.FunctionDef)
+            and node.name == "resolve_unmute_hud_state"
+        ):
             fn = node
             break
     assert fn is not None, "resolve_unmute_hud_state missing from ui.py"
-    src = ast.get_source_segment((ROOT / "ui.py").read_text(encoding="utf-8"), fn)
+    ui_src = (ROOT / "ui.py").read_text(encoding="utf-8")
+    src = ast.get_source_segment(ui_src, fn)
     assert src is not None
     assert "STANDBY" in src
     assert "LISTENING" in src
@@ -86,7 +90,8 @@ def test_set_muted_unmute_does_not_force_listening() -> None:
                     set_muted = item
                     break
     assert set_muted is not None
-    src = ast.get_source_segment((ROOT / "ui.py").read_text(encoding="utf-8"), set_muted)
+    ui_src = (ROOT / "ui.py").read_text(encoding="utf-8")
+    src = ast.get_source_segment(ui_src, set_muted)
     assert src is not None
     assert 'on_mute_changed' in src
     assert 'resolve_unmute_hud_state' in src

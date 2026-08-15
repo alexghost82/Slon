@@ -1,0 +1,5 @@
+pytest -q tests/unit tests/security tests/offline tests/integration --ignore=tests/unit/ui/test_face_load.py
+716 passed, 2 skipped
+EXIT:0
+
+Note: including test_face_load.py failed 2 tests with PermissionError on psutil.net_io_counters (agent host). Prior audit: 721 passed. Environment BLOCKED for those two, not attributed to DEF-003/004.

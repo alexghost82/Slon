@@ -5,6 +5,8 @@ import re
 import time
 from pathlib import Path
 
+from localization.ru_locale import plural_ru
+
 
 def get_base_dir():
     if getattr(sys, "frozen", False):
@@ -271,6 +273,7 @@ def _install_dependencies(dependencies: list[str], project_dir: Path) -> str:
         return f"Install error (non-fatal): {e}"
 
 def _open_vscode(project_dir: Path) -> bool:
+    """Open VS Code with argv-only subprocess (never via a shell)."""
     vscode_candidates = [
         "code",
         rf"C:\Users\{Path.home().name}\AppData\Local\Programs\Microsoft VS Code\bin\code.cmd",
@@ -278,11 +281,16 @@ def _open_vscode(project_dir: Path) -> bool:
     ]
     for cmd in vscode_candidates:
         try:
+            # .cmd/.bat need cmd.exe /c; still an argv list (no shell).
+            if cmd.lower().endswith((".cmd", ".bat")):
+                argv = ["cmd.exe", "/c", cmd, str(project_dir)]
+            else:
+                argv = [cmd, str(project_dir)]
             subprocess.Popen(
-                [cmd, str(project_dir)],
-                shell=True,
+                argv,
+                shell=False,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
+                stderr=subprocess.DEVNULL,
             )
             time.sleep(1.5)
             print(f"[DevAgent] 💻 VSCode opened: {project_dir}")
@@ -453,11 +461,11 @@ def _build_project(
     try:
         plan = _plan_project(description, language)
     except RateLimitError:
-        msg = "Rate limit reached, sir. Please try again in a moment."
+        msg = "Сэр, достигнут лимит запросов. Попробуйте через минуту."
         if speak: speak(msg)
         return msg
     except ValueError as e:
-        msg = f"Planning failed: {e}"
+        msg = f"Не удалось составить план: {e}"
         if speak: speak(msg)
         return msg
 
@@ -510,7 +518,7 @@ def _build_project(
                 break
 
     if not file_codes:
-        msg = "I could not write any project files, sir."
+        msg = "Сэр, мне не удалось создать ни одного файла проекта."
         if speak: speak(msg)
         return msg
 
@@ -529,13 +537,14 @@ def _build_project(
         log(f"Output preview: {last_output[:150]}")
 
         if not _has_error(last_output, run_command):
+            attempts_word = plural_ru(attempt, "попытку", "попытки", "попыток")
             msg = (
-                f"Project '{proj_name}' is working, sir. "
-                f"Built in {attempt} attempt{'s' if attempt > 1 else ''}. "
-                f"Saved to: {project_dir}"
+                f"Проект «{proj_name}» работает, сэр. "
+                f"Собран за {attempt} {attempts_word}. "
+                f"Сохранён в: {project_dir}"
             )
             if speak: speak(msg)
-            return f"{msg}\n\nOutput:\n{last_output}"
+            return f"{msg}\n\nВывод:\n{last_output}"
 
         if attempt == MAX_FIX_ATTEMPTS:
             break
@@ -563,18 +572,22 @@ def _build_project(
             file_codes.update(updated)
             time.sleep(1)
         except RateLimitError:
-            msg = "Rate limit reached during fix. Project saved, check it manually in VSCode."
+            msg = (
+                "Достигнут лимит запросов при исправлении. "
+                "Проект сохранён — проверьте его вручную в VSCode."
+            )
             if speak: speak(msg)
             return msg
         except Exception as e:
             log(f"Fix step failed: {e}")
 
     msg = (
-        f"I couldn't fully fix '{proj_name}' after {MAX_FIX_ATTEMPTS} attempts, sir. "
-        f"Project is saved at {project_dir} — open it in VSCode and check manually."
+        f"Сэр, мне не удалось полностью исправить «{proj_name}» "
+        f"за {MAX_FIX_ATTEMPTS} попыток. "
+        f"Проект сохранён в {project_dir} — откройте его в VSCode и проверьте вручную."
     )
     if speak: speak(msg)
-    return f"{msg}\n\nLast error:\n{last_output[:600]}"
+    return f"{msg}\n\nПоследняя ошибка:\n{last_output[:600]}"
 
 
 def dev_agent(
@@ -591,7 +604,7 @@ def dev_agent(
     timeout      = int(p.get("timeout", 30))
 
     if not description:
-        return "Please describe the project you want me to build, sir."
+        return "Сэр, опишите проект, который нужно собрать."
 
     return _build_project(
         description  = description,

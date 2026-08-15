@@ -1,7 +1,14 @@
 {
   "sourceLanguage" : "ru",
   "strings" : {
+    "127.0.0.1" : {
+
+    },
+    "8765" : {
+
+    },
     "app.title" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -17,23 +24,17 @@
         }
       }
     },
-    "nav.control" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Control"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Управление"
-          }
-        }
-      }
+    "Apple ID" : {
+
+    },
+    "Appwrite не настроен. Добавьте APPWRITE_* значения в конфигурацию приложения." : {
+
+    },
+    "JUST A RATHER VERY INTELLIGENT SYSTEM" : {
+
     },
     "nav.activity" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -49,7 +50,25 @@
         }
       }
     },
+    "nav.control" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Control"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Управление"
+          }
+        }
+      }
+    },
     "nav.remote" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -66,6 +85,7 @@
       }
     },
     "nav.settings" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -80,6 +100,81 @@
           }
         }
       }
+    },
+    "REMOTE SYSTEM INTERFACE" : {
+
+    },
+    "SHA-256 fingerprint" : {
+
+    },
+    "Slon" : {
+
+    },
+    "TLS (https)" : {
+
+    },
+    "Адрес" : {
+
+    },
+    "Аккаунт и синхронизация" : {
+
+    },
+    "Активность" : {
+
+    },
+    "Войти с Apple" : {
+
+    },
+    "Выйти" : {
+
+    },
+    "Компактный монитор" : {
+
+    },
+    "Микрофон включён при запуске" : {
+
+    },
+    "Найденные Mac" : {
+
+    },
+    "Настройки" : {
+
+    },
+    "Обновить статус" : {
+
+    },
+    "Поиск сервисов Slon в локальной сети…" : {
+
+    },
+    "Порт" : {
+
+    },
+    "Применить" : {
+
+    },
+    "Рабочий стол" : {
+
+    },
+    "Синхронизировать" : {
+
+    },
+    "Сопряжение и память" : {
+
+    },
+    "Текущее подключение" : {
+
+    },
+    "Удалённо" : {
+
+    },
+    "Уменьшать анимацию" : {
+
+    },
+    "Управление" : {
+
+    },
+    "Устройство" : {
+
     }
   },
   "version" : "1.0"

@@ -154,3 +154,14 @@ def test_no_subprocess_shell_true_in_reminder_module() -> None:
     # Ensure the default runner signature uses shell=False when present.
     if "shell=False" in text:
         assert text.count("shell=False") >= 1
+
+
+def test_no_subprocess_shell_true_in_dev_agent_or_computer_settings() -> None:
+    """DEF-003 regression: desktop action helpers must not use shell=True."""
+    import actions.computer_settings as computer_settings_mod
+    import actions.dev_agent as dev_agent_mod
+
+    for mod in (dev_agent_mod, computer_settings_mod):
+        text = Path(mod.__file__).read_text(encoding="utf-8")
+        assert "shell=True" not in text, f"{mod.__name__} must not use shell=True"
+        assert "subprocess" in text

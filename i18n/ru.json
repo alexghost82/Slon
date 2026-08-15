@@ -13,21 +13,129 @@
     "gemini_key": "Ключ Gemini API",
     "openrouter_key": "Ключ OpenRouter API",
     "os": "Операционная система",
+    "os_detected": "Определено автоматически: {name}",
     "initialise": "Инициализировать системы"
   },
   "window": {
-    "title": "Slon"
+    "title": "Slon",
+    "subtitle": "Персональный ИИ-ассистент"
+  },
+  "hud": {
+    "initialising": "ИНИЦИАЛИЗАЦИЯ",
+    "muted": "МИКРОФОН ВЫКЛ",
+    "speaking": "ГОВОРЮ",
+    "thinking": "ДУМАЮ",
+    "processing": "ОБРАБОТКА",
+    "standby": "СКАЖИТЕ «СЛОН»",
+    "listening": "СЛУШАЮ"
+  },
+  "panel": {
+    "sys_monitor": "МОНИТОР СИСТЕМЫ",
+    "activity_log": "ЖУРНАЛ СОБЫТИЙ",
+    "file_upload": "ЗАГРУЗКА ФАЙЛА",
+    "command_input": "ВВОД КОМАНДЫ"
+  },
+  "badge": {
+    "ai_core": "ЯДРО ИИ\nАКТИВНО",
+    "security": "ДОСТУП\nРАЗРЕШЁН",
+    "protocol": "ПРОТОКОЛ\nXXXVIII"
+  },
+  "metric": {
+    "uptime": "РАБОТА  {value}",
+    "process_count": "ПРОЦ  {value}",
+    "os": "ОС  {value}",
+    "not_available": "Н/Д"
   },
   "input": {
     "placeholder": "Введите команду или вопрос…"
   },
   "file": {
     "drop_hint": "Перетащите файл сюда или нажмите, чтобы загрузить",
-    "none_loaded": "Файл не загружен — перетащите или нажмите выше, чтобы загрузить"
+    "drop_types": "Изображения · Видео · Аудио · PDF · Документы · Код · Данные",
+    "drop_release": "Отпустите, чтобы загрузить",
+    "none_loaded": "Файл не загружен — перетащите или нажмите выше, чтобы загрузить",
+    "dialog_title": "Выберите файл для Slon",
+    "generic_kind": "ФАЙЛ",
+    "loaded_hint": "{icon}  {name}  ·  {size}  ·  Скажите Slon, что с ним сделать",
+    "loaded_log": "{name} ({size}) загружен",
+    "filter_all": "Все файлы",
+    "filter_images": "Изображения",
+    "filter_documents": "Документы",
+    "filter_data": "Данные",
+    "filter_code": "Код",
+    "filter_audio": "Аудио",
+    "filter_video": "Видео",
+    "filter_archives": "Архивы"
   },
   "mic": {
     "active": "Микрофон активен",
     "muted": "Микрофон выключен"
+  },
+  "button": {
+    "mic_active": "МИКРОФОН АКТИВЕН",
+    "mic_muted": "МИКРОФОН ВЫКЛЮЧЕН",
+    "tts_on": "ЛОКАЛЬНЫЙ TTS ВКЛ",
+    "tts_off": "ЛОКАЛЬНЫЙ TTS ВЫКЛ",
+    "tts_unavailable": "ЛОКАЛЬНЫЙ TTS Н/Д",
+    "stt_listen": "ЛОКАЛЬНЫЙ STT — СЛУШАТЬ",
+    "stt_unavailable": "ЛОКАЛЬНЫЙ STT Н/Д",
+    "api_on": "DESKTOP API ВКЛ",
+    "api_off": "DESKTOP API ВЫКЛ",
+    "api_address": "API {host}:{port}",
+    "fullscreen": "ПОЛНЫЙ ЭКРАН  [F11]"
+  },
+  "footer": {
+    "shortcuts": "[F4] Микрофон  ·  [F11] Полный экран",
+    "classification": "Slon  ·  СЕКРЕТНО",
+    "copyright": "© STARK INDUSTRIES"
+  },
+  "log": {
+    "prefix_system": "СИС:",
+    "prefix_error": "ОШИБКА:",
+    "prefix_user": "Вы:",
+    "prefix_assistant": "Слон:",
+    "prefix_file": "ФАЙЛ:",
+    "prefix_user_stt": "Вы (STT):",
+    "face_missing": "face.png не найден; используется геометрический HUD",
+    "initialised": "Инициализация завершена. ОС={os}. Slon в сети.",
+    "online": "Slon в сети.",
+    "session_restarting": "Сессия завершена — переподключение.",
+    "shutdown_requested": "Запрошено завершение работы.",
+    "standby": "Ожидание — скажите «{wake_word}», чтобы разбудить.",
+    "wake_detected": "Обнаружено слово активации ({source}).",
+    "mic_muted": "Микрофон выключен.",
+    "mic_active": "Микрофон включён.",
+    "bridge_line": "мост {line}",
+    "bridge_unavailable": "мост среды выполнения недоступен",
+    "bridge_failed": "мост среды выполнения не запустился — {error}",
+    "control_plane_unavailable": "плоскость управления недоступна — {error}",
+    "remote_start": "Удалённое устройство запросило запуск.",
+    "remote_pause": "Удалённое устройство приостановило микрофон.",
+    "remote_stop": "Удалённое устройство остановило текущий ввод.",
+    "tts_unavailable": "Локальный TTS недоступен — {error}",
+    "tts_download_hint": "Добровольная загрузка голоса: python -m speech.tts download --consent",
+    "tts_enabled": "Локальный Piper TTS включён.",
+    "tts_disabled": "Локальный Piper TTS выключен.",
+    "tts_error": "Ошибка локального TTS — {error}",
+    "stt_status": "Локальный STT — {message}",
+    "stt_recording": "Локальный STT: запись 3 с…",
+    "stt_empty": "Локальный STT ничего не распознал (для офлайн-ASR установите openai-whisper).",
+    "stt_error": "Ошибка локального STT — {error}",
+    "stt_mic_unavailable": "Микрофон недоступен для локального STT.",
+    "api_listener_unavailable": "Слушатель Desktop Control недоступен.",
+    "api_stopped": "Desktop Control API остановлен.",
+    "api_listening": "Desktop Control API слушает на {url} (loopback; требуется авторизация/сопряжение; tls={tls}).",
+    "api_tls_hint": "TLS опционально — python -m server --tls --tls-generate  (см. docs/audit/tls-lan.md)",
+    "api_start_failed": "Desktop API не запустился — {error}",
+    "policy_blocked": "Заблокировано политикой безопасности: {reason}",
+    "tool_error": "{tool} — {error}"
+  },
+  "runtime": {
+    "tts_not_initialised": "Локальный TTS не инициализирован",
+    "tts_module_unavailable": "Модуль локального TTS недоступен",
+    "stt_not_initialised": "Локальный STT не инициализирован",
+    "stt_module_unavailable": "Модуль локального STT недоступен",
+    "stt_display_name": "Локальный STT"
   },
   "dialog": {
     "confirm_delete": "Удалить {name}?"

@@ -53,6 +53,23 @@ Configure API keys in the UI or via your local config (never commit key files). 
 
 After launch, say **Slon** (Russian ASR often hears **Слон**) to get the assistant’s attention.
 
+## Language
+
+Slon is Russian-first:
+
+- The desktop UI, the activity log, and the first-run setup overlay are rendered from
+  the catalogs in `i18n/`. The active locale comes from `language` in
+  `config/settings.json` (`ru` by default, `en` also shipped); an unsupported value
+  falls back to Russian.
+- The assistant always answers in Russian regardless of the language you speak to it.
+  That rule lives in `core/prompt.txt`, so switching `language` to `en` changes the UI
+  chrome only, not the replies.
+- Speech recognition defaults to Russian (`ru`) and local speech synthesis uses the
+  Piper voice `ru_RU-dmitri-medium`.
+
+Tool parameters are still extracted in English (city names, search queries, and so on),
+which is required by the tool schemas.
+
 ## Desktop API (optional)
 
 Loopback-only by default:

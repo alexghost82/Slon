@@ -13,21 +13,129 @@
     "gemini_key": "Gemini API key",
     "openrouter_key": "OpenRouter API key",
     "os": "Operating system",
+    "os_detected": "Auto-detected: {name}",
     "initialise": "Initialise systems"
   },
   "window": {
-    "title": "Slon"
+    "title": "Slon",
+    "subtitle": "Personal AI Assistant"
+  },
+  "hud": {
+    "initialising": "INITIALISING",
+    "muted": "MUTED",
+    "speaking": "SPEAKING",
+    "thinking": "THINKING",
+    "processing": "PROCESSING",
+    "standby": "SAY SLON",
+    "listening": "LISTENING"
+  },
+  "panel": {
+    "sys_monitor": "SYS MONITOR",
+    "activity_log": "ACTIVITY LOG",
+    "file_upload": "FILE UPLOAD",
+    "command_input": "COMMAND INPUT"
+  },
+  "badge": {
+    "ai_core": "AI CORE\nACTIVE",
+    "security": "SEC\nCLEARED",
+    "protocol": "PROTOCOL\nXXXVIII"
+  },
+  "metric": {
+    "uptime": "UP  {value}",
+    "process_count": "PROC  {value}",
+    "os": "OS  {value}",
+    "not_available": "N/A"
   },
   "input": {
     "placeholder": "Type a command or question…"
   },
   "file": {
     "drop_hint": "Drop a file here or click to upload",
-    "none_loaded": "No file loaded — drop or click above to upload"
+    "drop_types": "Images · Video · Audio · PDF · Docs · Code · Data",
+    "drop_release": "Release to load",
+    "none_loaded": "No file loaded — drop or click above to upload",
+    "dialog_title": "Select a file for Slon",
+    "generic_kind": "FILE",
+    "loaded_hint": "{icon}  {name}  ·  {size}  ·  Tell Slon what to do with it",
+    "loaded_log": "{name} ({size}) loaded",
+    "filter_all": "All files",
+    "filter_images": "Images",
+    "filter_documents": "Documents",
+    "filter_data": "Data",
+    "filter_code": "Code",
+    "filter_audio": "Audio",
+    "filter_video": "Video",
+    "filter_archives": "Archives"
   },
   "mic": {
     "active": "Microphone active",
     "muted": "Microphone muted"
+  },
+  "button": {
+    "mic_active": "MICROPHONE ACTIVE",
+    "mic_muted": "MICROPHONE MUTED",
+    "tts_on": "LOCAL TTS ON",
+    "tts_off": "LOCAL TTS OFF",
+    "tts_unavailable": "LOCAL TTS N/A",
+    "stt_listen": "LOCAL STT LISTEN",
+    "stt_unavailable": "LOCAL STT N/A",
+    "api_on": "DESKTOP API ON",
+    "api_off": "DESKTOP API OFF",
+    "api_address": "API {host}:{port}",
+    "fullscreen": "FULLSCREEN  [F11]"
+  },
+  "footer": {
+    "shortcuts": "[F4] Mute  ·  [F11] Fullscreen",
+    "classification": "Slon  ·  CLASSIFIED",
+    "copyright": "© STARK INDUSTRIES"
+  },
+  "log": {
+    "prefix_system": "SYS:",
+    "prefix_error": "ERR:",
+    "prefix_user": "You:",
+    "prefix_assistant": "Slon:",
+    "prefix_file": "FILE:",
+    "prefix_user_stt": "You (STT):",
+    "face_missing": "face.png missing; using geometric HUD",
+    "initialised": "Initialised. OS={os}. Slon online.",
+    "online": "Slon online.",
+    "session_restarting": "Session ended — reconnecting.",
+    "shutdown_requested": "Shutdown requested.",
+    "standby": "Standby — say «{wake_word}» to wake.",
+    "wake_detected": "Wake word detected ({source}).",
+    "mic_muted": "Microphone muted.",
+    "mic_active": "Microphone active.",
+    "bridge_line": "bridge {line}",
+    "bridge_unavailable": "runtime bridge unavailable",
+    "bridge_failed": "runtime bridge failed — {error}",
+    "control_plane_unavailable": "control plane unavailable — {error}",
+    "remote_start": "Remote requested runtime start.",
+    "remote_pause": "Remote paused microphone input.",
+    "remote_stop": "Remote stopped the active input session.",
+    "tts_unavailable": "Local TTS unavailable — {error}",
+    "tts_download_hint": "Opt-in voice download: python -m speech.tts download --consent",
+    "tts_enabled": "Local Piper TTS enabled.",
+    "tts_disabled": "Local Piper TTS disabled.",
+    "tts_error": "Local TTS error — {error}",
+    "stt_status": "Local STT — {message}",
+    "stt_recording": "Local STT recording 3s…",
+    "stt_empty": "Local STT empty (install openai-whisper for offline ASR).",
+    "stt_error": "Local STT error — {error}",
+    "stt_mic_unavailable": "Microphone unavailable for local STT.",
+    "api_listener_unavailable": "Desktop Control listener unavailable.",
+    "api_stopped": "Desktop Control API stopped.",
+    "api_listening": "Desktop Control API listening on {url} (loopback; auth/pairing required; tls={tls}).",
+    "api_tls_hint": "TLS optional — python -m server --tls --tls-generate  (see docs/audit/tls-lan.md)",
+    "api_start_failed": "Desktop API start failed — {error}",
+    "policy_blocked": "Blocked by SafetyPolicy: {reason}",
+    "tool_error": "{tool} — {error}"
+  },
+  "runtime": {
+    "tts_not_initialised": "Local TTS not initialised",
+    "tts_module_unavailable": "Local TTS module unavailable",
+    "stt_not_initialised": "Local STT not initialised",
+    "stt_module_unavailable": "Local STT module unavailable",
+    "stt_display_name": "Local STT"
   },
   "dialog": {
     "confirm_delete": "Delete {name}?"

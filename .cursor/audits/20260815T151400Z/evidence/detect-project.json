@@ -1,0 +1,170 @@
+{
+  "schema_version": 1,
+  "generator": "production-readiness-auditor/detect-project.py",
+  "generated_at": "2026-08-15T15:14:01.204491+00:00",
+  "root": "/Users/slon/Documents/GitHub/Slon",
+  "git": {
+    "available": true,
+    "commit": "7a9c0f8d93181c950d3d1b02efed5b8ea18d00c9",
+    "branch": "integration/main",
+    "dirty": true,
+    "dirty_entry_count": 1
+  },
+  "platforms_detected": [
+    "ios-ipados"
+  ],
+  "signals": {
+    "apple": {
+      "paths": [],
+      "sample_swift": [
+        "ios/Package.swift",
+        "ios/MarkRemote/DesignSystem/MRSpacing.swift",
+        "ios/MarkRemote/DesignSystem/MRTypography.swift",
+        "ios/MarkRemote/DesignSystem/MRColor.swift",
+        "ios/MarkRemote/App/ConnectionSettingsView.swift",
+        "ios/MarkRemote/App/AppwriteServices.swift",
+        "ios/MarkRemote/App/CertificatePinningDelegate.swift",
+        "ios/MarkRemote/App/LiveServices.swift"
+      ]
+    },
+    "python": [
+      "pyproject.toml",
+      "requirements.txt",
+      "setup.py",
+      "requirements-macos.txt",
+      "requirements-base.txt",
+      "requirements-dev.txt",
+      "requirements-windows.txt",
+      "requirements-linux.txt"
+    ]
+  },
+  "docs_and_ci": [
+    "AGENTS.md",
+    "README.md",
+    "README.MD",
+    "readme.md",
+    "pyproject.toml"
+  ],
+  "npm_scripts": {},
+  "toolchains": {
+    "xcodebuild": {
+      "command": "xcodebuild",
+      "path": "/usr/bin/xcodebuild",
+      "available": true,
+      "exit_code": 1,
+      "version_line": "xcode-select: error: tool 'xcodebuild' requires Xcode, but active developer directory '/Library/Developer/CommandLineTools' is a command line tools instance"
+    },
+    "xcrun": {
+      "command": "xcrun",
+      "path": "/usr/bin/xcrun",
+      "available": true,
+      "exit_code": 0,
+      "version_line": "xcrun version 72."
+    },
+    "adb": {
+      "command": "adb",
+      "available": false
+    },
+    "flutter": {
+      "command": "flutter",
+      "available": false
+    },
+    "dotnet": {
+      "command": "dotnet",
+      "available": false
+    },
+    "node": {
+      "command": "node",
+      "path": "/opt/homebrew/bin/node",
+      "available": true,
+      "exit_code": 0,
+      "version_line": "v26.7.0"
+    },
+    "npm": {
+      "command": "npm",
+      "path": "/opt/homebrew/bin/npm",
+      "available": true,
+      "exit_code": 0,
+      "version_line": "11.19.0"
+    },
+    "pnpm": {
+      "command": "pnpm",
+      "path": "/opt/homebrew/bin/pnpm",
+      "available": true,
+      "exit_code": 0,
+      "version_line": "10.34.5"
+    },
+    "yarn": {
+      "command": "yarn",
+      "available": false
+    },
+    "cargo": {
+      "command": "cargo",
+      "available": false
+    },
+    "rustc": {
+      "command": "rustc",
+      "available": false
+    },
+    "cmake": {
+      "command": "cmake",
+      "path": "/opt/homebrew/bin/cmake",
+      "available": true,
+      "exit_code": 0,
+      "version_line": "cmake version 4.4.2"
+    },
+    "python3": {
+      "command": "python3",
+      "path": "/Library/Frameworks/Python.framework/Versions/3.14/bin/python3",
+      "available": true,
+      "exit_code": 0,
+      "version_line": "Python 3.14.7"
+    },
+    "java": {
+      "command": "java",
+      "path": "/usr/bin/java",
+      "available": true,
+      "exit_code": 1,
+      "version_line": "The operation couldn’t be completed. Unable to locate a Java Runtime."
+    },
+    "gradle": {
+      "command": "gradle",
+      "available": false
+    },
+    "go": {
+      "command": "go",
+      "available": false
+    },
+    "swift": {
+      "command": "swift",
+      "path": "/usr/bin/swift",
+      "available": true,
+      "exit_code": 0,
+      "version_line": "Apple Swift version 6.4 (swiftlang-6.4.0.30.4 clang-2100.3.30.1)"
+    },
+    "pod": {
+      "command": "pod",
+      "available": false
+    },
+    "tuist": {
+      "command": "tuist",
+      "available": false
+    },
+    "xcodegen": {
+      "command": "xcodegen",
+      "available": false
+    }
+  },
+  "possible_secret_files": [
+    "config/api_keys.json",
+    ".venv/lib/python3.12/site-packages/certifi/cacert.pem",
+    ".venv/lib/python3.12/site-packages/pip/_vendor/certifi/cacert.pem"
+  ],
+  "notes": [],
+  "safety": {
+    "read_only": true,
+    "installs_packages": false,
+    "mutates_project": false,
+    "prints_secret_values": false
+  }
+}

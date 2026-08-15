@@ -1,0 +1,21 @@
+# Evidence index
+generated=2026-08-15T15:19:40Z
+600b0b36fc8cf866f4f29eb5d2d49860e00cd2629726680372c35c739e2f337f /Users/slon/Documents/GitHub/Slon/.cursor/audits/20260815T151400Z/logs/sast-deps.txt
+4c3569f5da09975434dd9fd9a91fadbc4367a91d8f3c3fab59e9241ab9ee4bd8 /Users/slon/Documents/GitHub/Slon/.cursor/audits/20260815T151400Z/logs/venv-python.txt
+9190d918b90c05f95c4e0f5891d46c9be5748b81da3680765c49bdd5710a2804 /Users/slon/Documents/GitHub/Slon/.cursor/audits/20260815T151400Z/logs/mypy.txt
+8a1cb4140b7bb685648e26a44d295f5ff58afeecd575a821aa7038a7ff6f12e6 /Users/slon/Documents/GitHub/Slon/.cursor/audits/20260815T151400Z/logs/ruff.txt
+945bf67ac7fead1cd75c53494f8975c0f8105cb55869ce54c61ea9fbc19ee048 /Users/slon/Documents/GitHub/Slon/.cursor/audits/20260815T151400Z/logs/secret-scan.txt
+a8817f9d97e5f720042ffe4ae11844c0b1d90cbf08ae847b3b7bd26fa291480f /Users/slon/Documents/GitHub/Slon/.cursor/audits/20260815T151400Z/logs/main-launch.stdout.txt
+ad6692d2663ef3427748dd007d4db71a006cc9d80d7dcd0f4439bdbcf32ffdea /Users/slon/Documents/GitHub/Slon/.cursor/audits/20260815T151400Z/logs/preflight.txt
+068ec9b8ae2b64259800ea6a01b3f303c07e3c8f2b9cf0eb665afaf0ffdbe443 /Users/slon/Documents/GitHub/Slon/.cursor/audits/20260815T151400Z/logs/ios-swift-test.txt
+9d0ded7475bf27fe6d9955c5048e051f0d02de9302a95192cb4d96b66ccf7f68 /Users/slon/Documents/GitHub/Slon/.cursor/audits/20260815T151400Z/logs/main-launch-summary.txt
+c012d0036401ec4a01ae1b0a2a2fa2412031e011996f8a2707d18a8b02ed1060 /Users/slon/Documents/GitHub/Slon/.cursor/audits/20260815T151400Z/logs/secret-scan-detail.txt
+6f04dfb822dbe175e96cb2a0611f14cf4526e4e49258d96754bd86c855e89f5f /Users/slon/Documents/GitHub/Slon/.cursor/audits/20260815T151400Z/logs/pytest-unit.txt
+80680034370065967bee507b651404cb29365490391dd5ce89e84f8cb3aaf3ff /Users/slon/Documents/GitHub/Slon/.cursor/audits/20260815T151400Z/logs/pytest-all.txt
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 /Users/slon/Documents/GitHub/Slon/.cursor/audits/20260815T151400Z/logs/main-launch.stderr.txt
+9b6eb471230fd28b8d6bda5657a0267eb44b927da4181a978f03697b79de9e5f /Users/slon/Documents/GitHub/Slon/.cursor/audits/20260815T151400Z/logs/runtime-smoke.txt
+e8ebf8394c71c457b9f365dda1d56b517fae5994c6f4235f263986066831166f /Users/slon/Documents/GitHub/Slon/.cursor/audits/20260815T151400Z/logs/ios-app-build.txt
+4f1db00f2c7f9b8483be2e1dad1dc9f128bb5423798271e79e020f3e67ef9c98 /Users/slon/Documents/GitHub/Slon/.cursor/audits/20260815T151400Z/logs/sast-suites.txt
+e3ddd85c157f2ff787c5841f56bd5bde598f093b053971fe38a4f9df16b1044c /Users/slon/Documents/GitHub/Slon/.cursor/audits/20260815T151400Z/evidence/env-probe.txt
+528e983e35f3efad7fbde75ed8b755512ec04c55b71f2b366d44b712782dcfaf /Users/slon/Documents/GitHub/Slon/.cursor/audits/20260815T151400Z/evidence/detect-project.json
+9f353739f0a2bb4f02449048b1495bb20bd8654520e74c4c5d067fb32260450f /Users/slon/Documents/GitHub/Slon/.cursor/audits/20260815T151400Z/evidence/SHA256SUMS.txt

@@ -2,13 +2,15 @@ import asyncio
 import threading
 import json
 import sys
+import time
 import traceback
 from pathlib import Path
 
 import sounddevice as sd
 from google import genai
 from google.genai import types
-from ui import SlonUI, resolve_unmute_hud_state
+from localization import tr
+from ui import SlonUI, resolve_unmute_hud_state, sys_line
 from memory.memory_manager import (
     load_memory, update_memory, format_memory_for_prompt,
     should_extract_memory, extract_memory
@@ -58,6 +60,9 @@ RECEIVE_SAMPLE_RATE = 24000
 CHUNK_SIZE          = 1024
 # After the last finished turn while awake, return to standby (need wake word again).
 WAKE_IDLE_SECONDS   = 45.0
+# The mic is gated while the assistant speaks. If a turn never reports its end
+# (server interruption, dropped turn_complete), release the gate anyway.
+SPEAKING_STALL_SECONDS = 6.0
 
 
 def _get_api_key() -> str:
@@ -87,7 +92,7 @@ def _build_stack():
             key_provider=_key_provider,
         )
     except Exception as exc:
-        print(f"[Bridge] unavailable: {exc}")
+        print(f"[Bridge] недоступен: {exc}")
         return None
 
 
@@ -97,6 +102,7 @@ def _load_system_prompt() -> str:
     except Exception:
         return (
             "You are Slon, a calm, direct personal AI assistant (JARVIS-like manner). "
+            "Always speak and write to the user in Russian. "
             "Be concise, direct, and always use the provided tools to complete tasks. "
             "Never simulate or guess results — always call the appropriate tool."
         )
@@ -529,6 +535,10 @@ TOOL_DECLARATIONS = [
 ]
 
 
+class _SessionClosed(Exception):
+    """The Live server ended the session and the client must reconnect."""
+
+
 class SlonLive:
 
     def __init__(self, ui: SlonUI, runtime_stack=None):
@@ -539,6 +549,7 @@ class SlonLive:
         self._loop          = None
         self._is_speaking   = False
         self._speaking_lock = threading.Lock()
+        self._speaking_since = 0.0
         self._awake         = False
         self._awake_lock    = threading.Lock()
         self._sleep_handle: asyncio.TimerHandle | None = None
@@ -552,7 +563,7 @@ class SlonLive:
         if runtime_stack is not None:
             for line in runtime_stack.summary_lines():
                 try:
-                    self.ui.write_log(f"SYS: bridge {line}")
+                    self.ui.write_log(sys_line("log.bridge_line", line=line))
                 except Exception:
                     print(f"[Bridge] {line}")
 
@@ -596,9 +607,9 @@ class SlonLive:
         self._cancel_sleep_timer()
         self._drain_playback_queue()
         if was_awake or reason == "boot":
-            print(f"[Slon] 💤 Standby ({reason}) — say '{WAKE_WORD}'")
+            print(f"[Slon] 💤 Ожидание ({reason}) — скажите «{WAKE_WORD}»")
             try:
-                self.ui.write_log(f"SYS: Standby — say «{WAKE_WORD}» to wake.")
+                self.ui.write_log(sys_line("log.standby", wake_word=WAKE_WORD))
             except Exception:
                 pass
         if not self.ui.muted:
@@ -613,9 +624,9 @@ class SlonLive:
         if was:
             self._arm_sleep_timer()
             return False
-        print(f"[Slon] ⚡ Awake ({source})")
+        print(f"[Slon] ⚡ Пробуждение ({source})")
         try:
-            self.ui.write_log(f"SYS: Wake word detected ({source}).")
+            self.ui.write_log(sys_line("log.wake_detected", source=source))
         except Exception:
             pass
         if not self.ui.muted:
@@ -649,10 +660,30 @@ class SlonLive:
     def set_speaking(self, value: bool):
         with self._speaking_lock:
             self._is_speaking = value
+            self._speaking_since = time.monotonic() if value else 0.0
         if value:
             self.ui.set_state("SPEAKING")
         elif not self.ui.muted:
             self.ui.set_state("LISTENING" if self.is_awake() else "STANDBY")
+
+    async def _watch_speaking(self):
+        """Release the mic gate if a speaking turn stops reporting progress.
+
+        Each audio chunk / transcription refreshes the timestamp, so a healthy
+        turn never trips this. A turn that ends without ``turn_complete`` would
+        otherwise gate the mic forever and the assistant would stop reacting.
+        """
+        while True:
+            await asyncio.sleep(1.0)
+            with self._speaking_lock:
+                stalled = (
+                    self._is_speaking
+                    and time.monotonic() - self._speaking_since > SPEAKING_STALL_SECONDS
+                )
+            if stalled:
+                print("[Slon] ⏱️ Реплика зависла — освобождаю микрофон")
+                self._drain_playback_queue()
+                self.set_speaking(False)
 
     def speak(self, text: str):
         if not self._loop or not self.session:
@@ -667,8 +698,10 @@ class SlonLive:
 
     def speak_error(self, tool_name: str, error: str):
         short = str(error)[:120]
-        self.ui.write_log(f"ERR: {tool_name} — {short}")
-        self.speak(f"Sir, {tool_name} encountered an error. {short}")
+        self.ui.write_log(
+            f"{tr('log.prefix_error')} {tr('log.tool_error', tool=tool_name, error=short)}"
+        )
+        self.speak(f"Сэр, при выполнении {tool_name} произошла ошибка. {short}")
 
     def _build_config(self) -> types.LiveConnectConfig:
         from datetime import datetime
@@ -711,6 +744,8 @@ class SlonLive:
         args = dict(fc.args or {})
 
         print(f"[Slon] 🔧 {name}  {args}")
+        # The model stopped talking to call a tool — do not keep the mic gated.
+        self.set_speaking(False)
         self.ui.set_state("THINKING")
 
         if authorize_tool is not None and self.runtime_stack is not None:
@@ -733,7 +768,7 @@ class SlonLive:
                 msg = f"Blocked by SafetyPolicy: {reason}"
                 print(f"[Slon] 🛑 {msg}")
                 try:
-                    self.ui.write_log(f"SYS: {msg}")
+                    self.ui.write_log(sys_line("log.policy_blocked", reason=reason))
                 except Exception:
                     pass
                 if not self.ui.muted:
@@ -847,8 +882,8 @@ class SlonLive:
                 r = await loop.run_in_executor(None, lambda: flight_finder(parameters=args, player=self.ui))
                 result = r or "Done."
             elif name in ("shutdown_slon", "shutdown_jarvis"):
-                self.ui.write_log("SYS: Shutdown requested.")
-                self.speak("Goodbye, sir.")
+                self.ui.write_log(sys_line("log.shutdown_requested"))
+                self.speak("До свидания, сэр.")
 
                 def _shutdown():
                     import time, sys, os
@@ -880,7 +915,7 @@ class SlonLive:
             await self.session.send_realtime_input(media=msg)
 
     async def _listen_audio(self):
-        print("[Slon] 🎤 Mic started")
+        print("[Slon] 🎤 Микрофон запущен")
         loop = asyncio.get_event_loop()
 
         def callback(indata, frames, time_info, status):
@@ -901,15 +936,15 @@ class SlonLive:
                 blocksize=CHUNK_SIZE,
                 callback=callback,
             ):
-                print("[Slon] 🎤 Mic stream open")
+                print("[Slon] 🎤 Поток микрофона открыт")
                 while True:
                     await asyncio.sleep(0.1)
         except Exception as e:
-            print(f"[Slon] ❌ Mic: {e}")
+            print(f"[Slon] ❌ Микрофон: {e}")
             raise
 
     async def _receive_audio(self):
-        print("[Slon] 👂 Recv started")
+        print("[Slon] 👂 Приём запущен")
         out_buf, in_buf = [], []
 
         try:
@@ -921,8 +956,18 @@ class SlonLive:
                         if self.is_awake():
                             self.audio_in_queue.put_nowait(response.data)
 
+                    if response.go_away is not None:
+                        # Cancels the sibling tasks so ``run`` reconnects.
+                        raise _SessionClosed("server sent go_away")
+
                     if response.server_content:
                         sc = response.server_content
+
+                        if sc.interrupted:
+                            # Server cut the turn short; no turn_complete follows.
+                            self._drain_playback_queue()
+                            self.set_speaking(False)
+                            out_buf = []
 
                         if sc.output_transcription and sc.output_transcription.text:
                             if self.is_awake():
@@ -944,14 +989,16 @@ class SlonLive:
 
                             full_in = " ".join(in_buf).strip()
                             if full_in:
-                                self.ui.write_log(f"You: {full_in}")
+                                self.ui.write_log(f"{tr('log.prefix_user')} {full_in}")
                                 if contains_wake_word(full_in):
                                     self.wake(source="voice")
                             in_buf = []
 
                             full_out = " ".join(out_buf).strip()
                             if full_out and self.is_awake():
-                                self.ui.write_log(f"Slon: {full_out}")
+                                self.ui.write_log(
+                                    f"{tr('log.prefix_assistant')} {full_out}"
+                                )
                             out_buf = []
 
                             if self.is_awake():
@@ -987,13 +1034,20 @@ class SlonLive:
                             function_responses=fn_responses
                         )
 
+        except _SessionClosed as e:
+            print(f"[Slon] 👋 Сессия завершена ({e}) — переподключение")
+            try:
+                self.ui.write_log(sys_line("log.session_restarting"))
+            except Exception:
+                pass
+            raise
         except Exception as e:
-            print(f"[Slon] ❌ Recv: {e}")
+            print(f"[Slon] ❌ Приём: {e}")
             traceback.print_exc()
             raise
 
     async def _play_audio(self):
-        print("[Slon] 🔊 Play started")
+        print("[Slon] 🔊 Воспроизведение запущено")
         loop = asyncio.get_event_loop()
 
         stream = sd.RawOutputStream(
@@ -1009,7 +1063,7 @@ class SlonLive:
                 self.set_speaking(True)
                 await asyncio.to_thread(stream.write, chunk)
         except Exception as e:
-            print(f"[Slon] ❌ Play: {e}")
+            print(f"[Slon] ❌ Воспроизведение: {e}")
             raise
         finally:
             self.set_speaking(False)
@@ -1024,7 +1078,7 @@ class SlonLive:
 
         while True:
             try:
-                print("[Slon] 🔌 Connecting...")
+                print("[Slon] 🔌 Подключение…")
                 self.ui.set_state("THINKING")
                 config = self._build_config()
 
@@ -1037,14 +1091,15 @@ class SlonLive:
                     self.audio_in_queue = asyncio.Queue()
                     self.out_queue      = asyncio.Queue(maxsize=10)
 
-                    print("[Slon] ✅ Connected.")
+                    print("[Slon] ✅ Подключено.")
                     self.enter_standby(reason="boot")
-                    self.ui.write_log("SYS: Slon online.")
+                    self.ui.write_log(sys_line("log.online"))
 
                     tg.create_task(self._send_realtime())
                     tg.create_task(self._listen_audio())
                     tg.create_task(self._receive_audio())
                     tg.create_task(self._play_audio())
+                    tg.create_task(self._watch_speaking())
                     
             except Exception as e:
                 print(f"[Slon] ⚠️ {e}")
@@ -1052,14 +1107,21 @@ class SlonLive:
 
             self.set_speaking(False)
             self.ui.set_state("THINKING")
-            print("[Slon] 🔄 Reconnecting in 3s...")
+            print("[Slon] 🔄 Переподключение через 3 с…")
             await asyncio.sleep(3)
 
 def _bootstrap_settings() -> None:
-    """Create ``config/settings.json`` from the example on first run (no secrets)."""
-    from config.settings import ensure_settings_file
+    """Create ``config/settings.json`` on first run and apply its UI locale.
 
-    ensure_settings_file()
+    Runs before the UI is built so every widget renders in the configured
+    language. An unsupported language keeps the built-in Russian default.
+    """
+    from config.settings import ensure_settings_file
+    from localization.translator import SUPPORTED_LOCALES, set_locale
+
+    settings = ensure_settings_file()
+    if settings.language in SUPPORTED_LOCALES:
+        set_locale(settings.language)
 
 
 def main():
@@ -1074,7 +1136,7 @@ def main():
         try:
             asyncio.run(agent.run())
         except KeyboardInterrupt:
-            print("\nShutting down...")
+            print("\nЗавершение работы…")
 
     threading.Thread(target=runner, daemon=True).start()
     ui.root.mainloop()

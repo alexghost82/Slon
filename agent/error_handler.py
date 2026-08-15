@@ -44,7 +44,7 @@ Return ONLY valid JSON:
   "reason": "why it failed",
   "fix_suggestion": "what to try instead (for replan)",
   "max_retries": 1,
-  "user_message": "Short message to tell the user (max 15 words)"
+  "user_message": "Short message for the user, written in Russian (max 15 words)"
 }
 """
 
@@ -87,7 +87,7 @@ def analyze_error(
             "reason":        f"Failed {attempt} times: {error[:100]}",
             "fix_suggestion": "Try a completely different approach or tool",
             "max_retries":   0,
-            "user_message":  "Trying a different approach, sir."
+            "user_message":  "Пробую другой подход, сэр."
         }
 
     client = genai.Client(api_key=_get_api_key())
@@ -125,7 +125,7 @@ Attempt number: {attempt}"""
 
         if step.get("critical") and result["decision"] == ErrorDecision.SKIP:
             result["decision"]     = ErrorDecision.REPLAN
-            result["user_message"] = "This step is critical — finding alternative approach, sir."
+            result["user_message"] = "Шаг критичен, сэр — ищу другой подход."
 
         print(f"[ErrorHandler] Decision: {result['decision'].value} — {result.get('reason', '')}")
         return result
@@ -137,7 +137,7 @@ Attempt number: {attempt}"""
             "reason":         str(e),
             "fix_suggestion": "Try alternative approach",
             "max_retries":    1,
-            "user_message":   "Encountered an issue, adjusting approach, sir."
+            "user_message":   "Возникла проблема, сэр — корректирую подход."
         }
 
 

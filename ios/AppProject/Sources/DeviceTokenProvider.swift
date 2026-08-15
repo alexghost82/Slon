@@ -27,10 +27,10 @@ final class DeviceTokenProvider: AccessTokenProviding, @unchecked Sendable {
     }
 
     func invalidate() {
-        lock.lock()
-        cachedToken = nil
-        cachedExpiry = nil
-        lock.unlock()
+        lock.withLock {
+            cachedToken = nil
+            cachedExpiry = nil
+        }
     }
 
     func accessToken() async throws -> String? {
@@ -59,20 +59,20 @@ final class DeviceTokenProvider: AccessTokenProviding, @unchecked Sendable {
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         let decoded = try decoder.decode(TokenResponse.self, from: data)
 
-        lock.lock()
-        cachedToken = decoded.accessToken
-        cachedExpiry = decoded.expiresAt
-        lock.unlock()
+        lock.withLock {
+            cachedToken = decoded.accessToken
+            cachedExpiry = decoded.expiresAt
+        }
         return decoded.accessToken
     }
 
     private func validCachedToken() -> String? {
-        lock.lock()
-        defer { lock.unlock() }
-        guard let token = cachedToken else { return nil }
-        if let expiry = cachedExpiry, expiry - 5 <= Date().timeIntervalSince1970 {
-            return nil
+        lock.withLock {
+            guard let token = cachedToken else { return nil }
+            if let expiry = cachedExpiry, expiry - 5 <= Date().timeIntervalSince1970 {
+                return nil
+            }
+            return token
         }
-        return token
     }
 }

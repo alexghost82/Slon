@@ -17,29 +17,29 @@ def weather_action(
     city = parameters.get("city")
     time = parameters.get("time")
     if not city or not isinstance(city, str):
-        msg = "Sir, the city is missing for the weather report."
+        msg = "Сэр, для прогноза погоды не указан город."
         _speak_and_log(msg, player)
         return msg
 
     city = city.strip()
 
     if not time or not isinstance(time, str):
-        time = "today"
+        time = "сегодня"
     else:
         time = time.strip()
 
-    search_query = f"weather in {city} {time}"
+    search_query = f"погода {city} {time}"
     encoded_query = quote_plus(search_query)
     url = f"https://www.google.com/search?q={encoded_query}"
 
     try:
         webbrowser.open(url)
     except Exception:
-        msg = f"Sir, I couldn't open the browser for the weather report."
+        msg = "Сэр, не удалось открыть браузер для прогноза погоды."
         _speak_and_log(msg, player)
         return msg
 
-    msg = f"Showing the weather for {city}, {time}, sir."
+    msg = f"Показываю погоду: {city}, {time}, сэр."
     _speak_and_log(msg, player)
 
     if session_memory:
@@ -57,6 +57,8 @@ def weather_action(
 def _speak_and_log(message: str, player=None):
     if player:
         try:
-            player.write_log(f"Slon: {message}")
+            from localization import tr
+
+            player.write_log(f"{tr('log.prefix_assistant')} {message}")
         except Exception:
             pass

@@ -47,7 +47,7 @@ SYSTEM_PROMPT = (
     "Help the user in a way they can understand — don't be overly complex. "
     "Be concise, smart, and helpful. "
     "Respond in maximum 2 short sentences. Speed is priority. "
-    "Address the user as 'sir' for a tone of respect. "
+    "Always answer in Russian and address the user as 'сэр' for a tone of respect. "
     "Ask if the user needs any further help with their problem."
 )
 
@@ -254,7 +254,11 @@ class _LiveSession:
                     if transcript_buf and self._player:
                         full = re.sub(r'\s+', ' ', " ".join(transcript_buf)).strip()
                         if full:
-                            self._player.write_log(f"Slon: {full}")
+                            from localization import tr
+
+                            self._player.write_log(
+                                f"{tr('log.prefix_assistant')} {full}"
+                            )
                             print(f"[ScreenProcess] 💬 {full}")
                     transcript_buf = []
         except Exception as e:

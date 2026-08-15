@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from config import is_windows, is_mac, is_linux
+from localization.ru_locale import plural_ru
 
 def _get_base_dir() -> Path:
     if getattr(sys, "frozen", False):
@@ -169,14 +170,14 @@ def _format_spoken(
 ) -> str:
     if not flights:
         return (
-            f"I couldn't find any flights from {origin} to {destination} "
-            f"on {date}, sir. The page may not have loaded correctly."
+            f"Сэр, я не нашёл рейсов {origin} → {destination} "
+            f"на {date}. Возможно, страница не загрузилась корректно."
         )
 
-    lines = [f"Here are the top flights from {origin} to {destination} on {date}, sir."]
+    lines = [f"Сэр, вот лучшие рейсы {origin} → {destination} на {date}."]
 
     for i, f in enumerate(flights[:5], 1):
-        airline   = f.get("airline",   "Unknown airline")
+        airline   = f.get("airline",   "Неизвестная авиакомпания")
         departure = f.get("departure", "--:--")
         arrival   = f.get("arrival",   "--:--")
         duration  = f.get("duration",  "")
@@ -184,13 +185,16 @@ def _format_spoken(
         price     = f.get("price",     "")
         currency  = f.get("currency",  "")
 
-        stop_str  = "non-stop" if stops == 0 else f"{stops} stop{'s' if stops > 1 else ''}"
-        price_str = f"{price} {currency}".strip() if price else "price unavailable"
+        if stops == 0:
+            stop_str = "без пересадок"
+        else:
+            stop_str = f"{stops} {plural_ru(stops, 'пересадка', 'пересадки', 'пересадок')}"
+        price_str = f"{price} {currency}".strip() if price else "цена недоступна"
         dur_str   = f", {duration}" if duration else ""
 
         lines.append(
-            f"Option {i}: {airline}, departing {departure}, "
-            f"arriving {arrival}{dur_str}, {stop_str}, {price_str}."
+            f"Вариант {i}: {airline}, вылет {departure}, "
+            f"прилёт {arrival}{dur_str}, {stop_str}, {price_str}."
         )
 
     # Cheapest — strip non-digits for comparison
@@ -285,9 +289,9 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
     save        = bool(params.get("save", False))
 
     if not origin or not destination:
-        return "Please provide both origin and destination, sir."
+        return "Сэр, укажите пункт вылета и пункт назначения."
     if not date_raw:
-        return "Please provide a departure date, sir."
+        return "Сэр, укажите дату вылета."
 
     # Normalise cabin value
     if cabin not in _CABIN_CODE:
@@ -300,7 +304,7 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
         player.write_log(f"[FlightFinder] {origin} → {destination} on {date}")
 
     if speak:
-        speak(f"Searching flights from {origin} to {destination} on {date}, sir.")
+        speak(f"Ищу рейсы {origin} → {destination} на {date}, сэр.")
 
     print(
         f"[FlightFinder] ▶️ {origin} → {destination} | {date}"
@@ -314,10 +318,10 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
         )
 
         if not raw_text:
-            return "Could not retrieve flight data, sir. The page may not have loaded."
+            return "Сэр, не удалось получить данные о рейсах. Похоже, страница не загрузилась."
 
         if speak:
-            speak("Analysing the results now, sir.")
+            speak("Анализирую результаты, сэр.")
 
         flights = _parse_flights_with_gemini(raw_text, origin, destination, date)
         spoken  = _format_spoken(flights, origin, destination, date)
@@ -330,10 +334,10 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
         if save and flights:
             report     = _format_text_report(flights, origin, destination, date, return_date, page_url)
             saved_path = _save_to_desktop(report, origin, destination)
-            result    += f" Results saved to Desktop: {saved_path}"
+            result    += f" Результаты сохранены на рабочий стол: {saved_path}"
 
         return result
 
     except Exception as e:
         print(f"[FlightFinder] ❌ {e}")
-        return f"Flight search failed, sir: {e}"
+        return f"Сэр, поиск рейсов не удался: {e}"

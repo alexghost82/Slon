@@ -11,11 +11,13 @@ ROOT = Path(__file__).resolve().parents[3]
 
 def test_face_missing_sys_notice_without_file(tmp_path: Path) -> None:
     pytest.importorskip("PyQt6")
-    from ui import _FACE_MISSING_SYS, face_missing_sys_notice
+    from localization import tr
+    from ui import face_missing_sys_notice
 
     missing = tmp_path / "face.png"
-    assert face_missing_sys_notice(str(missing)) == _FACE_MISSING_SYS
-    assert _FACE_MISSING_SYS == "SYS: face.png missing; using geometric HUD"
+    expected = f"{tr('log.prefix_system')} {tr('log.face_missing')}"
+    assert face_missing_sys_notice(str(missing)) == expected
+    assert "face.png" in expected
 
 
 def test_face_missing_sys_notice_with_file(tmp_path: Path) -> None:

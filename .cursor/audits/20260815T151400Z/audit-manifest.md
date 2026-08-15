@@ -1,0 +1,37 @@
+# Audit manifest
+
+- Timestamp: `2026-08-15T15:14:00Z` (dir `20260815T151400Z`)
+- Mode: `full audit`
+- Root: `/Users/slon/Documents/GitHub/Slon`
+- Commit: `7a9c0f8d93181c950d3d1b02efed5b8ea18d00c9`
+- Branch: `integration/main`
+- Dirty: yes — untracked `.cursor/` (skill + audit) + fix-and-verify changes: actions/, tests/, `.github/workflows/ci.yml` (uncommitted; user did not request commit)
+- Detect script: `evidence/detect-project.json`
+- Platforms detected: desktop Python (Win/mac/Linux claimed) + iOS MarkRemote; host = macOS 27.0 arm64
+- Platforms in scope:
+  - **Primary:** macOS desktop (Python 3.12 venv)
+  - **Secondary:** iOS simulator MarkRemote (Xcode-beta)
+  - **Out of scope this run:** Windows/Linux install matrices, App Store, commercial distribution, Epic 14 (APNs/VPN/public internet), production load against live cloud quotas
+- Constraints / blockers known at start:
+  - Product license CC BY-NC 4.0 — explicitly **not** commercial-ready
+  - System Python 3.14 unsupported; `.venv` is 3.12.14 (OK)
+  - Interactive mic/HUD/tool smoke historically deferred to operator
+  - No `.github/workflows` CI (resolved in fix-and-verify: workflow added; remote green NOT RUN)
+- Fix-and-verify follow-up (same audit ID): DEF-003/004/002 fixed; see `fix-and-verify.md`, `launch-runbook-execution.md`
+- Endpoints (redacted): Desktop API default `127.0.0.1:8765`; cloud providers Gemini/OpenRouter (keys present locally, values never logged)
+- Secrets policy: values never logged; `config/api_keys.json` gitignored and present
+- Toolchain:
+  - `.venv` Python 3.12.14
+  - Xcode 27.0 beta (`DEVELOPER_DIR=/Users/slon/Downloads/Xcode-beta.app/Contents/Developer`)
+  - Simulator iPhone 17 Pro booted (`874FB573-8CD5-42E4-AE71-6F6A5120654C`)
+- Phase progress:
+  - A Discovery — done
+  - B Risk model — done
+  - C Static — done (pytest/ruff/mypy/secrets/SAST-lite)
+  - D Build/launch — partial (preflight, main.py 6s, iOS build; install/upgrade matrices NOT RUN)
+  - E UI/E2E — NOT RUN interactive desktop; iOS UITests against live desktop NOT RUN
+  - F Functional — covered mostly via automated security/unit; live tool path NOT RUN
+  - G Performance/load — NOT RUN
+  - H Security — automated gates PASS; manual abuse/fuzz NOT RUN
+  - I Operability — docs reviewed; CI absent
+  - J Report — done
