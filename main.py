@@ -8,7 +8,7 @@ from pathlib import Path
 import sounddevice as sd
 from google import genai
 from google.genai import types
-from ui import SlonUI
+from ui import SlonUI, resolve_unmute_hud_state
 from memory.memory_manager import (
     load_memory, update_memory, format_memory_for_prompt,
     should_extract_memory, extract_memory
@@ -544,6 +544,7 @@ class SlonLive:
         self._sleep_handle: asyncio.TimerHandle | None = None
         self.runtime_stack  = runtime_stack
         self.ui.on_text_command = self._on_text_command
+        self.ui.on_mute_changed = self._on_mute_changed
         control_plane = getattr(self.ui, "control_plane", None)
         if control_plane is not None:
             control_plane.bind_text_handler(self._on_text_command)
@@ -558,6 +559,16 @@ class SlonLive:
     def is_awake(self) -> bool:
         with self._awake_lock:
             return self._awake
+
+    def _on_mute_changed(self, muted: bool) -> None:
+        """Re-assert HUD after mute toggle — unmute must not fake LISTENING in standby."""
+        if muted:
+            return
+        with self._speaking_lock:
+            speaking = self._is_speaking
+        self.ui.set_state(
+            resolve_unmute_hud_state(awake=self.is_awake(), speaking=speaking)
+        )
 
     def _cancel_sleep_timer(self) -> None:
         handle = self._sleep_handle

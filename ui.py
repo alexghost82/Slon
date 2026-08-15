@@ -74,6 +74,13 @@ _RIGHT_W = 340
 _OS = platform.system()  # "Windows" | "Darwin" | "Linux"
 
 
+def resolve_unmute_hud_state(*, awake: bool, speaking: bool = False) -> str:
+    """HUD state after mic unmute — never claim LISTENING while asleep."""
+    if speaking:
+        return "SPEAKING"
+    return "LISTENING" if awake else "STANDBY"
+
+
 class C:
     BG        = "#00060a"
     PANEL     = "#010d14"
@@ -1080,6 +1087,7 @@ class MainWindow(QMainWindow):
         )
 
         self.on_text_command  = None
+        self.on_mute_changed  = None  # Callable[[bool], None] — Live re-asserts HUD
         self._muted           = False
         self._current_file: str | None = None
         self._local_tts_provider = None
@@ -1686,7 +1694,6 @@ class MainWindow(QMainWindow):
 
     def _remote_start(self) -> None:
         self._set_muted(False)
-        self._state_sig.emit("LISTENING")
         self._log_sig.emit("SYS: Remote requested runtime start.")
 
     def _remote_pause(self) -> None:
@@ -1865,6 +1872,7 @@ class MainWindow(QMainWindow):
         self._set_muted(not self._muted)
 
     def _set_muted(self, value: bool) -> None:
+        was_muted = self._muted
         self._muted = bool(value)
         self.hud.muted = self._muted
         self._style_mute_btn()
@@ -1872,11 +1880,18 @@ class MainWindow(QMainWindow):
             self._apply_state("MUTED")
             self._log_sig.emit("SYS: Microphone muted.")
         else:
-            self._apply_state("LISTENING")
+            # Do not force LISTENING — standby must stay SAY SLON until wake.
+            if self.on_mute_changed is None:
+                self._apply_state(resolve_unmute_hud_state(awake=False))
             self._log_sig.emit("SYS: Microphone active.")
         plane = getattr(self, "_control_plane", None)
         if plane is not None:
             plane.update_state(mic_active=not self._muted)
+        if self.on_mute_changed is not None and was_muted != self._muted:
+            try:
+                self.on_mute_changed(self._muted)
+            except Exception:
+                pass
 
     def _style_mute_btn(self):
         if self._muted:
@@ -1956,7 +1971,8 @@ class MainWindow(QMainWindow):
         if self._overlay:
             self._overlay.hide()
             self._overlay = None
-        self._apply_state("LISTENING")
+        # First-run: wait for wake word (Live will re-assert on connect).
+        self._apply_state("STANDBY")
         self._log_sig.emit(f"SYS: Initialised. OS={os_name.upper()}. Slon online.")
 
 class _RootShim:
@@ -2000,6 +2016,14 @@ class SlonUI:
     @on_text_command.setter
     def on_text_command(self, cb):
         self._win.on_text_command = cb
+
+    @property
+    def on_mute_changed(self):
+        return self._win.on_mute_changed
+
+    @on_mute_changed.setter
+    def on_mute_changed(self, cb):
+        self._win.on_mute_changed = cb
 
     def set_state(self, state: str):
         self._win._state_sig.emit(state)
