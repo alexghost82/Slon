@@ -140,3 +140,17 @@ def test_repo_example_path_exists_and_matches_defaults() -> None:
     assert settings.language == "ru"
     assert settings.privacy_profile == "hybrid"
     assert settings.provider_id == "gemini"
+
+
+def test_main_startup_wires_ensure_settings_file() -> None:
+    """App entry must bootstrap settings before UI (LAUNCH-MVP follow-up)."""
+    main_path = Path(__file__).resolve().parents[3] / "main.py"
+    source = main_path.read_text(encoding="utf-8")
+    assert "def _bootstrap_settings" in source
+    assert "ensure_settings_file" in source
+    assert "_bootstrap_settings()" in source
+    # Call site must run at the start of main(), not only in a background runner.
+    main_fn_start = source.index("def main():")
+    bootstrap_call = source.index("_bootstrap_settings()", main_fn_start)
+    runner_def = source.index("def runner():", main_fn_start)
+    assert bootstrap_call < runner_def

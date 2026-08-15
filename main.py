@@ -1055,7 +1055,15 @@ class SlonLive:
             print("[Slon] 🔄 Reconnecting in 3s...")
             await asyncio.sleep(3)
 
+def _bootstrap_settings() -> None:
+    """Create ``config/settings.json`` from the example on first run (no secrets)."""
+    from config.settings import ensure_settings_file
+
+    ensure_settings_file()
+
+
 def main():
+    _bootstrap_settings()
     ui = SlonUI("face.png")
 
     def runner():
