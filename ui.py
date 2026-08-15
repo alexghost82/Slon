@@ -20,8 +20,8 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import (
     QBrush, QColor, QDragEnterEvent, QDropEvent, QFont, QFontDatabase,
-    QKeySequence, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap,
-    QRadialGradient, QShortcut,
+    QIcon, QKeySequence, QLinearGradient, QPainter, QPainterPath, QPen,
+    QPixmap, QRadialGradient, QShortcut,
 )
 from PyQt6.QtWidgets import (
     QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
@@ -70,6 +70,7 @@ def _base_dir() -> Path:
 BASE_DIR   = _base_dir()
 CONFIG_DIR = BASE_DIR / "config"
 API_FILE   = CONFIG_DIR / "api_keys.json"
+APP_ICON_FILE = "logo.png"
 
 _DEFAULT_W, _DEFAULT_H = 980, 700
 _MIN_W,     _MIN_H     = 820, 580
@@ -89,6 +90,31 @@ def resolve_unmute_hud_state(*, awake: bool, speaking: bool = False) -> str:
 def sys_line(key: str, **kwargs: object) -> str:
     """Return a localized activity-log line carrying the SYS tag."""
     return f"{tr('log.prefix_system')} {tr(key, **kwargs)}"
+
+
+def app_icon_path(base_dir: Path | None = None) -> Path | None:
+    """Path to the shipped app icon, or ``None`` when the asset is absent."""
+    candidate = (base_dir or BASE_DIR) / APP_ICON_FILE
+    try:
+        return candidate if candidate.is_file() else None
+    except OSError:
+        return None
+
+
+def apply_app_icon(app: QApplication, base_dir: Path | None = None) -> bool:
+    """Set the window / taskbar icon from ``logo.png``; no-op when unusable.
+
+    macOS takes the Dock icon from the app bundle plist, so a plain
+    ``python main.py`` run still shows the interpreter icon in the Dock.
+    """
+    path = app_icon_path(base_dir)
+    if path is None:
+        return False
+    icon = QIcon(str(path))
+    if icon.isNull():
+        return False
+    app.setWindowIcon(icon)
+    return True
 
 
 def _today_label() -> str:
@@ -2039,6 +2065,7 @@ class SlonUI:
     def __init__(self, face_path: str, size=None):
         self._app = QApplication.instance() or QApplication(sys.argv)
         self._app.setStyle("Fusion")
+        apply_app_icon(self._app)
         self._win = MainWindow(face_path)
         self._win.show()
         self.root = _RootShim(self._app)

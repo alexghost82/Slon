@@ -70,6 +70,23 @@ Slon is Russian-first:
 Tool parameters are still extracted in English (city names, search queries, and so on),
 which is required by the tool schemas.
 
+## App icon
+
+`logo.png` in the repository root is the single source of truth.
+
+- Desktop: loaded at startup and set as the Qt window / taskbar icon. On macOS the
+  Dock icon still comes from an app bundle, so `python main.py` keeps the
+  interpreter icon there.
+- iOS (`MarkRemote`): built from the same art into
+  `ios/AppProject/Sources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png`
+  (square, opaque — iOS rejects icons with alpha).
+
+After replacing `logo.png`, regenerate the iOS asset:
+
+```bash
+python -m tools.make_app_icons
+```
+
 ## Desktop API (optional)
 
 Loopback-only by default:

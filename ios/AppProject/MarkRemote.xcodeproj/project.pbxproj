@@ -14,6 +14,7 @@
 		AA0000000000000000000025 /* AppRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000015 /* AppRootView.swift */; };
 		AA0000000000000000000026 /* ConnectionSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000016 /* ConnectionSettingsView.swift */; };
 		AA0000000000000000000027 /* LiveScreenTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000017 /* LiveScreenTabView.swift */; };
+		AA0000000000000000000028 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000019 /* Assets.xcassets */; };
 		AA0000000000000000000041 /* DesignSystem in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000031 /* DesignSystem */; };
 		AA0000000000000000000042 /* MarkRemoteModels in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000032 /* MarkRemoteModels */; };
 		AA0000000000000000000043 /* MarkRemoteSecurity in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000033 /* MarkRemoteSecurity */; };
@@ -42,6 +43,7 @@
 		AA0000000000000000000016 /* ConnectionSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionSettingsView.swift; sourceTree = "<group>"; };
 		AA0000000000000000000017 /* LiveScreenTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveScreenTabView.swift; sourceTree = "<group>"; };
 		AA0000000000000000000018 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		AA0000000000000000000019 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		AA0000000000000000000051 /* MarkRemoteUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MarkRemoteUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA0000000000000000000059 /* PairingFlowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingFlowUITests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -98,6 +100,7 @@
 				AA0000000000000000000016 /* ConnectionSettingsView.swift */,
 				AA0000000000000000000017 /* LiveScreenTabView.swift */,
 				AA0000000000000000000018 /* Info.plist */,
+				AA0000000000000000000019 /* Assets.xcassets */,
 			);
 			path = Sources;
 			sourceTree = "<group>";
@@ -202,6 +205,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AA0000000000000000000028 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -353,7 +357,7 @@
 		AA000000000000000000000E /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 865A4QHV69;
@@ -379,7 +383,7 @@
 		AA000000000000000000000F /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 865A4QHV69;

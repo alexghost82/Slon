@@ -29,6 +29,12 @@ xcrun simctl launch <simulator-udid> local.mark.remote
 
 Default connection target is `http://127.0.0.1:8765`; change host/port/TLS in the app's Настройки tab for same-LAN use.
 
+### App icon
+
+`AppProject/Sources/Assets.xcassets/AppIcon.appiconset` holds the 1024×1024 master
+generated from the repo-root `logo.png` (`python -m tools.make_app_icons`). Do not edit
+`AppIcon-1024.png` by hand — replace the source logo and regenerate.
+
 ### End-to-end UI test
 
 `MarkRemoteUITests` pairs against a real desktop listener, so start it first:
