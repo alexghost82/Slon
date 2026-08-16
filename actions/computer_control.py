@@ -9,6 +9,9 @@ import time
 import random
 from pathlib import Path
 
+from config import get_os
+from runtime_paths import resource_root, user_memory_dir
+
 try:
     import pyautogui
     pyautogui.FAILSAFE = True
@@ -24,23 +27,14 @@ except ImportError:
     _PYPERCLIP = False
 
 def _base_dir() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
-    return Path(__file__).resolve().parent.parent
+    return resource_root()
 
 
 _BASE         = _base_dir()
-_CONFIG_PATH  = _BASE / "config" / "api_keys.json"
-_MEMORY_PATH  = _BASE / "memory" / "long_term.json"
-
-def _load_config() -> dict:
-    try:
-        return json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+_MEMORY_PATH  = user_memory_dir() / "long_term.json"
 
 def _get_os() -> str:
-    return _load_config().get("os_system", "windows").lower()
+    return get_os()
 
 _SAFE_SCREENSHOT_ROOTS = (
     Path.home(),

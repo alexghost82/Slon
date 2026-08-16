@@ -39,6 +39,23 @@ python main.py
 
 Configure API keys in the UI or via your local config (never commit key files). A Gemini key is required for the default cloud path; OpenRouter is optional.
 
+### Build a macOS app
+
+Build a standalone, ad-hoc signed `Slon.app` for local use:
+
+```bash
+source .venv/bin/activate
+pip install -r requirements-packaging-macos.txt
+python -m playwright install chromium
+python packaging/macos/build_app.py
+open dist/Slon.app
+```
+
+The bundle uses the stable identifier `local.slon.desktop`, takes its Dock icon
+from `logo.png`, and requests microphone, camera, and Apple Events access only
+when those features are used. Settings and memory are stored in
+`~/Library/Application Support/Slon`; API keys use macOS Keychain.
+
 ## Requirements
 
 | Item | Notes |
@@ -75,8 +92,8 @@ which is required by the tool schemas.
 `logo.png` in the repository root is the single source of truth.
 
 - Desktop: loaded at startup and set as the Qt window / taskbar icon. On macOS the
-  Dock icon still comes from an app bundle, so `python main.py` keeps the
-  interpreter icon there.
+  Dock icon comes from `dist/Slon.app`; a plain `python main.py` run still shows
+  the interpreter icon there.
 - iOS (`MarkRemote`): built from the same art into
   `ios/AppProject/Sources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png`
   (square, opaque — iOS rejects icons with alpha).

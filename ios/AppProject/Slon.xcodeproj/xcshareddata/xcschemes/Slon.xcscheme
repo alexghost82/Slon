@@ -15,9 +15,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "AA0000000000000000000005"
-               BuildableName = "MarkRemote.app"
-               BlueprintName = "MarkRemote"
-               ReferencedContainer = "container:MarkRemote.xcodeproj">
+               BuildableName = "Slon.app"
+               BlueprintName = "Slon"
+               ReferencedContainer = "container:Slon.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -33,9 +33,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "AA0000000000000000000050"
-               BuildableName = "MarkRemoteUITests.xctest"
-               BlueprintName = "MarkRemoteUITests"
-               ReferencedContainer = "container:MarkRemote.xcodeproj">
+               BuildableName = "SlonUITests.xctest"
+               BlueprintName = "SlonUITests"
+               ReferencedContainer = "container:Slon.xcodeproj">
             </BuildableReference>
          </TestableReference>
       </Testables>
@@ -55,9 +55,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "AA0000000000000000000005"
-            BuildableName = "MarkRemote.app"
-            BlueprintName = "MarkRemote"
-            ReferencedContainer = "container:MarkRemote.xcodeproj">
+            BuildableName = "Slon.app"
+            BlueprintName = "Slon"
+            ReferencedContainer = "container:Slon.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -72,9 +72,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "AA0000000000000000000005"
-            BuildableName = "MarkRemote.app"
-            BlueprintName = "MarkRemote"
-            ReferencedContainer = "container:MarkRemote.xcodeproj">
+            BuildableName = "Slon.app"
+            BlueprintName = "Slon"
+            ReferencedContainer = "container:Slon.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

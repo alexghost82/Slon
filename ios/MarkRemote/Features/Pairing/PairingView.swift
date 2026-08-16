@@ -110,7 +110,7 @@ public struct PairingView: View {
             if viewModel.pairedDevices.isEmpty {
                 MREmptyState(
                     title: "Нет устройств",
-                    message: "Сопрягите Mac через Mark Remote.",
+                    message: "Сопрягите Mac через Slon.",
                     systemImage: "laptopcomputer"
                 )
                 .frame(minHeight: 160)

@@ -22,14 +22,14 @@ except ImportError:
 
 from google import genai
 from google.genai import types
+from config import get_secret
+from runtime_paths import resource_root, user_config_dir
 
 def get_base_dir():
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
-    return Path(__file__).resolve().parent.parent
+    return resource_root()
 
 BASE_DIR        = get_base_dir()
-API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
+API_CONFIG_PATH = user_config_dir() / "api_keys.json"
 
 LIVE_MODEL          = "models/gemini-2.5-flash-native-audio-preview-12-2025"
 CHANNELS            = 1
@@ -54,9 +54,7 @@ SYSTEM_PROMPT = (
 
 def _get_api_key() -> str:
     try:
-        with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-            keys = json.load(f)
-        key = keys.get("gemini_api_key", "")
+        key = get_secret("gemini_api_key")
         if not key:
             raise ValueError("gemini_api_key not found")
         return key

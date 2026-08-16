@@ -5,13 +5,13 @@ import re
 import time
 from pathlib import Path
 
+from config import get_secret
 from localization.ru_locale import plural_ru
+from runtime_paths import resource_root
 
 
 def get_base_dir():
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
-    return Path(__file__).resolve().parent.parent
+    return resource_root()
 
 
 BASE_DIR         = get_base_dir()
@@ -22,8 +22,10 @@ MODEL_PLANNER    = "gemini-2.5-flash"
 MODEL_WRITER     = "gemini-2.5-flash"
 
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    key = get_secret("gemini_api_key")
+    if not key:
+        raise RuntimeError("Gemini API key is not configured")
+    return key
 
 
 def _get_model(model_name: str):

@@ -104,7 +104,8 @@ struct DesktopControlView: View {
             .padding(MRSpacing.md)
         }
         .background(MRColor.background.ignoresSafeArea())
-        .navigationTitle("Slon")
+        .navigationTitle("")
+        .toolbarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {

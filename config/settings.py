@@ -7,11 +7,13 @@ import os
 from pathlib import Path
 from typing import Any
 
+from runtime_paths import resource_root, user_config_dir
+
 from .schema import Settings, SettingsValidationError, default_settings, validate_settings
 
-_CONFIG_DIR = Path(__file__).resolve().parent
+_CONFIG_DIR = user_config_dir()
 SETTINGS_PATH = _CONFIG_DIR / "settings.json"
-EXAMPLE_SETTINGS_PATH = _CONFIG_DIR / "settings.example.json"
+EXAMPLE_SETTINGS_PATH = resource_root() / "config" / "settings.example.json"
 
 
 def load_settings(path: Path | None = None) -> Settings:

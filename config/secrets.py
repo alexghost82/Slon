@@ -22,11 +22,13 @@ import sys
 import tempfile
 from pathlib import Path
 
+from runtime_paths import user_config_dir
+
 KNOWN_SECRET_NAMES = frozenset(
     {"gemini_api_key", "openrouter_api_key", "openai_api_key"}
 )
 SERVICE_NAME = "Slon"
-FALLBACK_PATH = Path(__file__).resolve().parent / "api_keys.json"
+FALLBACK_PATH = user_config_dir() / "api_keys.json"
 
 
 class SecretStoreError(RuntimeError):

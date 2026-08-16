@@ -94,7 +94,7 @@ def test_ios_appicon_contents_json_points_at_the_png() -> None:
 
 def test_xcode_project_uses_the_appicon_asset() -> None:
     pbxproj = (
-        ROOT / "ios" / "AppProject" / "MarkRemote.xcodeproj" / "project.pbxproj"
+        ROOT / "ios" / "AppProject" / "Slon.xcodeproj" / "project.pbxproj"
     ).read_text(encoding="utf-8")
     assert 'ASSETCATALOG_COMPILER_APPICON_NAME = ""' not in pbxproj
     assert pbxproj.count("ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;") == 2

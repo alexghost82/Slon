@@ -3,13 +3,11 @@ import re
 from datetime import datetime
 from threading import Lock
 from pathlib import Path
-import sys
 
+from runtime_paths import user_memory_dir
 
 def get_base_dir() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
-    return Path(__file__).resolve().parent.parent
+    return user_memory_dir().parent
 
 
 BASE_DIR         = get_base_dir()

@@ -1,0 +1,4 @@
+-r requirements-macos.txt
+
+# Build-only dependency for creating a standalone macOS application bundle.
+py2app==0.28.10

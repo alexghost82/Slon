@@ -4,11 +4,12 @@ import sys
 from pathlib import Path
 from enum import Enum
 
+from config import get_secret
+from runtime_paths import resource_root
+
 
 def get_base_dir() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
-    return Path(__file__).resolve().parent.parent
+    return resource_root()
 
 
 BASE_DIR        = get_base_dir()
@@ -50,8 +51,10 @@ Return ONLY valid JSON:
 
 
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    key = get_secret("gemini_api_key")
+    if not key:
+        raise RuntimeError("Gemini API key is not configured")
+    return key
 
 
 def analyze_error(

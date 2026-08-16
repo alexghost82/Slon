@@ -1,4 +1,4 @@
-# MarkRemote (iOS)
+# Slon (iOS)
 
 Swift 6 package for the Slon remote client. Talks only to the Desktop Control API (loopback / paired LAN). Does not embed AI provider API keys.
 
@@ -16,31 +16,24 @@ swift test
 
 ## Runnable iOS app
 
-`AppProject/MarkRemote.xcodeproj` is the shippable app target. It consumes this package as a local dependency and wires the live Desktop Control API (pairing, token minting, status, screen capture, live JPEG frames, settings).
+`AppProject/Slon.xcodeproj` is the shippable app target. It consumes this package as a local dependency and wires the live Desktop Control API (pairing, token minting, status, screen capture, live JPEG frames, settings).
 
 ```bash
 export DEVELOPER_DIR=/Users/slon/Downloads/Xcode-beta.app/Contents/Developer
 cd ios/AppProject
-xcodebuild -project MarkRemote.xcodeproj -scheme MarkRemote \
+xcodebuild -project Slon.xcodeproj -scheme Slon \
   -destination 'id=<simulator-udid>' -derivedDataPath .build-xcode build
-xcrun simctl install <simulator-udid> .build-xcode/Build/Products/Debug-iphonesimulator/MarkRemote.app
-xcrun simctl launch <simulator-udid> local.mark.remote
+xcrun simctl install <simulator-udid> .build-xcode/Build/Products/Debug-iphonesimulator/Slon.app
+xcrun simctl launch <simulator-udid> local.slon.app
 ```
 
 Default connection target is `http://127.0.0.1:8765`; change host/port/TLS in the app's Настройки tab for same-LAN use.
 
-### App icon
-
-`AppProject/Sources/Assets.xcassets/AppIcon.appiconset` holds the 1024×1024 master
-generated from the repo-root `logo.png` (`python -m tools.make_app_icons`). Do not edit
-`AppIcon-1024.png` by hand — replace the source logo and regenerate.
-
 ### End-to-end UI test
 
-`MarkRemoteUITests` pairs against a real desktop listener, so start it first:
+`SlonUITests` pairs against a real desktop listener, so start it first:
 
 ```bash
 python3 -m server --host 127.0.0.1 --port 8765
-xcodebuild test -project MarkRemote.xcodeproj -scheme MarkRemote -destination 'id=<simulator-udid>'
+xcodebuild test -project Slon.xcodeproj -scheme Slon -destination 'id=<simulator-udid>'
 ```
-

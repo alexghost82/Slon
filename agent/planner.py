@@ -3,11 +3,12 @@ import re
 import sys
 from pathlib import Path
 
+from config import get_secret
+from runtime_paths import resource_root
+
 
 def get_base_dir() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
-    return Path(__file__).resolve().parent.parent
+    return resource_root()
 
 
 BASE_DIR        = get_base_dir()
@@ -173,8 +174,10 @@ OUTPUT — return ONLY valid JSON, no markdown, no explanation, no code blocks:
 
 
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    key = get_secret("gemini_api_key")
+    if not key:
+        raise RuntimeError("Gemini API key is not configured")
+    return key
 
 
 def create_plan(goal: str, context: str = "") -> dict:

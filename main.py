@@ -1,15 +1,14 @@
 import asyncio
 import threading
-import json
-import sys
 import time
 import traceback
-from pathlib import Path
 
 import sounddevice as sd
 from google import genai
 from google.genai import types
+from config import get_secret
 from localization import tr
+from runtime_paths import resource_root, user_config_dir, user_memory_dir
 from ui import SlonUI, resolve_unmute_hud_state, sys_line
 from memory.memory_manager import (
     load_memory, update_memory, format_memory_for_prompt,
@@ -45,13 +44,11 @@ except Exception:  # pragma: no cover
 
 
 def get_base_dir():
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
-    return Path(__file__).resolve().parent
+    return resource_root()
 
 
 BASE_DIR        = get_base_dir()
-API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
+API_CONFIG_PATH = user_config_dir() / "api_keys.json"
 PROMPT_PATH     = BASE_DIR / "core" / "prompt.txt"
 LIVE_MODEL          = "models/gemini-2.5-flash-native-audio-preview-12-2025"
 CHANNELS            = 1
@@ -66,17 +63,16 @@ SPEAKING_STALL_SECONDS = 6.0
 
 
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    value = get_secret("gemini_api_key")
+    if not value:
+        raise RuntimeError("Gemini API key is not configured")
+    return value
 
 
 def _key_provider(name: str) -> str | None:
     """Injected secret reader for the runtime bridge (no values logged)."""
     try:
-        with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        value = data.get(name)
-        return value if isinstance(value, str) and value.strip() else None
+        return get_secret(name)
     except Exception:
         return None
 
@@ -90,6 +86,7 @@ def _build_stack():
             provider_id="gemini",
             network_mode="hybrid",
             key_provider=_key_provider,
+            memory_db_path=user_memory_dir() / "mark_memory.sqlite3",
         )
     except Exception as exc:
         print(f"[Bridge] недоступен: {exc}")
@@ -1126,7 +1123,7 @@ def _bootstrap_settings() -> None:
 
 def main():
     _bootstrap_settings()
-    ui = SlonUI("face.png")
+    ui = SlonUI(str(BASE_DIR / "face.png"))
 
     def runner():
         ui.wait_for_api_key()

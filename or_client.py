@@ -8,13 +8,14 @@ from typing import Optional
 
 import requests
 
+from config import get_secret
+from runtime_paths import resource_root
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("openrouter_client")
 
 def _get_base_dir() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
-    return Path(__file__).resolve().parent
+    return resource_root()
 
 
 BASE_DIR     = _get_base_dir()
@@ -22,14 +23,10 @@ API_KEY_PATH = BASE_DIR / "config" / "api_keys.json"
 
 def _load_api_key() -> str:
     try:
-        with open(API_KEY_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        key = data.get("openrouter_api_key", "").strip()
+        key = (get_secret("openrouter_api_key") or "").strip()
         if not key:
-            raise ValueError("openrouter_api_key is empty in api_keys.json")
+            raise ValueError("openrouter_api_key is not configured")
         return key
-    except FileNotFoundError:
-        raise RuntimeError(f"api_keys.json not found at: {API_KEY_PATH}")
     except Exception as e:
         raise RuntimeError(f"Failed to load OpenRouter API key: {e}")
 

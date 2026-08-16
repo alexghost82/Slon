@@ -9,10 +9,14 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
 import psutil
+
+from config import get_secret, load_settings, save_settings, set_secret
+from runtime_paths import resource_root, user_config_dir, user_memory_dir
 
 from PyQt6.QtCore import (
     QEasingCurve, QMimeData, QObject, QPointF, QRectF, QSize, Qt,
@@ -63,12 +67,10 @@ except Exception:  # pragma: no cover
     build_runtime_stack = None  # type: ignore[assignment]
 
 def _base_dir() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
-    return Path(__file__).resolve().parent
+    return resource_root()
 
 BASE_DIR   = _base_dir()
-CONFIG_DIR = BASE_DIR / "config"
+CONFIG_DIR = user_config_dir()
 API_FILE   = CONFIG_DIR / "api_keys.json"
 APP_ICON_FILE = "logo.png"
 
@@ -1715,17 +1717,16 @@ class MainWindow(QMainWindow):
         try:
             def _keys(name: str) -> str | None:
                 try:
-                    data = json.loads(API_FILE.read_text(encoding="utf-8"))
+                    return get_secret(name)
                 except Exception:
                     return None
-                value = data.get(name)
-                return value if isinstance(value, str) and value.strip() else None
 
             stack = build_runtime_stack(
                 repo_root=BASE_DIR,
                 provider_id="gemini",
                 network_mode="hybrid",
                 key_provider=_keys,
+                memory_db_path=user_memory_dir() / "mark_memory.sqlite3",
             )
             self._runtime_stack = stack
             for line in stack.summary_lines()[:12]:
@@ -2011,12 +2012,13 @@ class MainWindow(QMainWindow):
             plane.append_log(text)
 
     def _check_config(self) -> bool:
-        if not API_FILE.exists(): return False
         try:
-            d = json.loads(API_FILE.read_text(encoding="utf-8"))
-            return (bool(d.get("gemini_api_key")) and
-                    bool(d.get("openrouter_api_key")) and
-                    bool(d.get("os_system")))
+            settings = load_settings()
+            return (
+                bool(get_secret("gemini_api_key"))
+                and bool(get_secret("openrouter_api_key"))
+                and bool(settings.os_system)
+            )
         except Exception:
             return False
 
@@ -2035,15 +2037,9 @@ class MainWindow(QMainWindow):
 
     # Change signature:
     def _on_setup_done(self, key: str, or_key: str, os_name: str):
-        os.makedirs(CONFIG_DIR, exist_ok=True)
-        API_FILE.write_text(
-            json.dumps({
-                "gemini_api_key":    key,
-                "openrouter_api_key": or_key,
-                "os_system":         os_name,
-            }, indent=4),
-            encoding="utf-8",
-        )
+        set_secret("gemini_api_key", key)
+        set_secret("openrouter_api_key", or_key)
+        save_settings(replace(load_settings(), os_system=os_name))
         self._ready = True
         if self._overlay:
             self._overlay.hide()

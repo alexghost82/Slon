@@ -9,7 +9,8 @@ from __future__ import annotations
 import json
 import platform
 import sys
-from pathlib import Path
+
+from runtime_paths import user_config_dir
 
 from .schema import (
     Settings,
@@ -25,7 +26,7 @@ from .secrets import (
 )
 from .settings import load_settings, save_settings
 
-_LEGACY_KEYS_PATH = Path(__file__).resolve().parent / "api_keys.json"
+_LEGACY_KEYS_PATH = user_config_dir() / "api_keys.json"
 
 __all__ = [
     "KNOWN_SECRET_NAMES",

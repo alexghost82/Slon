@@ -49,7 +49,7 @@ public struct DashboardView: View {
         HStack(alignment: .center, spacing: MRSpacing.sm) {
             MRSectionHeader(
                 "Рабочий стол",
-                subtitle: "Состояние Mark Remote без ключей провайдеров."
+                subtitle: "Состояние Slon без ключей провайдеров."
             )
             Spacer(minLength: 0)
             MRStatusBadge(viewModel.connectionStatus)

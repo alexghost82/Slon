@@ -2,7 +2,7 @@ import MarkRemoteApp
 import SwiftUI
 
 @main
-struct MarkRemoteMainApp: App {
+struct SlonMainApp: App {
     var body: some Scene {
         WindowGroup {
             MarkRemoteRootView()

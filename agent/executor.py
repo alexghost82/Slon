@@ -4,6 +4,9 @@ import threading
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
+from config import get_secret
+from runtime_paths import resource_root
+
 from mark.safety import (
     DecisionKind,
     SafetyDecision,
@@ -17,9 +20,7 @@ from mark.safety import (
 
 
 def get_base_dir() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent
-    return Path(__file__).resolve().parent.parent
+    return resource_root()
 
 
 BASE_DIR = get_base_dir()
@@ -47,12 +48,8 @@ class ToolDeniedError(SafetyPolicyError):
 
 def _get_api_key() -> str:
     """Lazy helper for leftover translate/summarize paths. Not used for tools."""
-    if not API_CONFIG_PATH.is_file():
-        raise FileNotFoundError("API key file is not available.")
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    key = data.get("gemini_api_key")
-    if not isinstance(key, str) or not key.strip():
+    key = get_secret("gemini_api_key")
+    if not key:
         raise RuntimeError("Gemini API key is not configured.")
     return key
 

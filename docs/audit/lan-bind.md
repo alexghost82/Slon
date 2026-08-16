@@ -53,7 +53,7 @@ denied even with the LAN opt-in flag.
    (or `allow_non_loopback=True`).
 3. Complete **pairing** (`/v1/pairing/start` → `/v1/pairing/complete`) then
    mint a Bearer token (`/v1/auth/token` with `device_id` + `device_secret`).
-4. Point the iOS Mark Remote client at `http://<desktop-lan-ip>:8765`
+4. Point the iOS Slon client at `http://<desktop-lan-ip>:8765`
    (TLS for production is a separate hard requirement; this personal listener
    is HTTP for local LAN bring-up).
 
