@@ -58,3 +58,35 @@ def test_bundle_identifier_and_privacy_descriptions_are_configured() -> None:
     assert '"NSMicrophoneUsageDescription"' in setup_source
     assert '"NSCameraUsageDescription"' in setup_source
     assert '"NSAppleEventsUsageDescription"' in setup_source
+
+
+def test_signing_handles_nested_macho_files_before_the_bundle() -> None:
+    build_source = (ROOT / "packaging" / "macos" / "build_app.py").read_text(
+        encoding="utf-8"
+    )
+    assert "def sign_app_bundle()" in build_source
+    assert 'run("codesign", "--force", "--sign", "-", str(path))' in build_source
+    assert 'run("codesign", "--verify", "--deep", "--strict"' in build_source
+
+
+def test_codex_run_action_uses_project_build_and_run_script() -> None:
+    run_script = ROOT / "script" / "build_and_run.sh"
+    environment = ROOT / ".codex" / "environments" / "environment.toml"
+    assert run_script.is_file()
+    assert environment.is_file()
+    assert "packaging/macos/build_app.py" in run_script.read_text(encoding="utf-8")
+    assert 'command = "./script/build_and_run.sh"' in environment.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_py2app_package_roots_are_regular_python_packages() -> None:
+    for package in ("actions", "agent", "mark", "speech"):
+        assert (ROOT / package / "__init__.py").is_file()
+
+
+def test_translations_resolve_from_runtime_resource_root() -> None:
+    translator_source = (ROOT / "localization" / "translator.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'resource_root() / "i18n"' in translator_source

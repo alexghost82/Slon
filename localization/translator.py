@@ -7,14 +7,14 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from string import Formatter
 from typing import Any, Mapping
+
+from runtime_paths import resource_root
 
 DEFAULT_LOCALE = "ru"
 SUPPORTED_LOCALES = ("ru", "en")
 
-_I18N_DIR = Path(__file__).resolve().parent.parent / "i18n"
 _FORMATTER = Formatter()
 
 _current_locale = DEFAULT_LOCALE
@@ -121,7 +121,7 @@ def _load_catalogs() -> dict[str, dict[str, str]]:
 
 
 def _read_catalog(locale: str) -> dict[str, str]:
-    path = _I18N_DIR / f"{locale}.json"
+    path = resource_root() / "i18n" / f"{locale}.json"
     if not path.is_file():
         raise FileNotFoundError(f"catalog file is missing: {path}")
     raw = json.loads(path.read_text(encoding="utf-8"))
