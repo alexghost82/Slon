@@ -1,5 +1,15 @@
 """Canonical tool contracts and runtime primitives."""
 
 from mark.tools.contracts import ArtifactRef, ToolResult, ToolSpec
+from mark.tools.errors import DuplicateToolError, ToolRegistryError, UnknownToolError
+from mark.tools.registry import ToolRegistry
 
-__all__ = ["ArtifactRef", "ToolResult", "ToolSpec"]
+__all__ = [
+    "ArtifactRef",
+    "DuplicateToolError",
+    "ToolRegistry",
+    "ToolRegistryError",
+    "ToolResult",
+    "ToolSpec",
+    "UnknownToolError",
+]
