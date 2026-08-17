@@ -14,10 +14,61 @@ ROUTING_MODES = frozenset({"manual", "local_first", "local_only", "cloud_first"}
 
 Availability = Mapping[object, bool] | None
 
+_LOCAL_PREFERENCE_WEIGHT = 1_000_000_000.0
+_UNKNOWN_COST = 1_000_000.0
+
 
 def is_local_model(model: ModelInfo) -> bool:
     """Return whether a catalog entry belongs to a supported local runtime."""
     return model.provider_id in LOCAL_PROVIDER_IDS
+
+
+def score_model(
+    model: ModelInfo,
+    *,
+    required_capabilities: frozenset[str],
+    prefer_local: bool,
+    privacy_profile: str,
+    availability: bool,
+) -> float:
+    """Score a model only after enforcing routing hard constraints.
+
+    A higher score is preferred.  Invalid models are rejected rather than
+    assigned a low score so capability, privacy, and availability can never be
+    traded for cost.  Unknown cost sorts after a known cost while remaining a
+    usable candidate.
+    """
+    missing = tuple(
+        capability
+        for capability in sorted(required_capabilities)
+        if not bool(getattr(model, capability, False))
+    )
+    if missing:
+        raise CapabilityError(
+            f"model does not support required capabilities: {', '.join(missing)}",
+            provider_id=model.provider_id,
+            model_id=model.model_id,
+        )
+    if not availability:
+        raise CapabilityError(
+            "model is unavailable",
+            provider_id=model.provider_id,
+            model_id=model.model_id,
+        )
+    if privacy_profile in {"fully_local", "local_with_tools"} and not is_local_model(
+        model
+    ):
+        raise CapabilityError(
+            f"model is not permitted by privacy profile {privacy_profile!r}",
+            provider_id=model.provider_id,
+            model_id=model.model_id,
+        )
+
+    estimated_cost = _UNKNOWN_COST if model.cost is None else max(model.cost, 0.0)
+    local_preference = (
+        _LOCAL_PREFERENCE_WEIGHT if prefer_local and is_local_model(model) else 0.0
+    )
+    return local_preference - estimated_cost
 
 
 def select_model(
@@ -34,9 +85,8 @@ def select_model(
 ) -> ModelInfo:
     """Select one model after eliminating every invalid candidate.
 
-    Input order is the deterministic preference order within a routing tier.
-    Cost/latency scoring intentionally belongs to W14-T13 and can reorder the
-    already-valid candidates before calling this function.
+    Cost ranks already-valid models within a routing tier. Configured provider
+    preference and input order are deterministic tie-breakers.
     """
     if routing_mode not in ROUTING_MODES:
         raise ProviderError(f"unknown routing mode {routing_mode!r}")
@@ -65,17 +115,45 @@ def select_model(
             None,
         )
     elif routing_mode == "local_only":
-        selected = next((model for model in permitted if is_local_model(model)), None)
+        selected = _best_candidate(
+            [model for model in permitted if is_local_model(model)],
+            configured_provider_id,
+            required=frozenset(required),
+            prefer_local=True,
+            privacy_profile=privacy_profile or "",
+        )
     elif routing_mode == "local_first":
-        selected = next((model for model in permitted if is_local_model(model)), None)
+        selected = _best_candidate(
+            [model for model in permitted if is_local_model(model)],
+            configured_provider_id,
+            required=frozenset(required),
+            prefer_local=True,
+            privacy_profile=privacy_profile or "",
+        )
         if selected is None:
-            selected = _preferred_provider(permitted, configured_provider_id)
+            selected = _best_candidate(
+                permitted,
+                configured_provider_id,
+                required=frozenset(required),
+                prefer_local=False,
+                privacy_profile=privacy_profile or "",
+            )
     else:  # cloud_first
         clouds = [model for model in permitted if not is_local_model(model)]
-        selected = _preferred_provider(clouds, configured_provider_id)
+        selected = _best_candidate(
+            clouds,
+            configured_provider_id,
+            required=frozenset(required),
+            prefer_local=False,
+            privacy_profile=privacy_profile or "",
+        )
         if selected is None:
-            selected = next(
-                (model for model in permitted if is_local_model(model)), None
+            selected = _best_candidate(
+                [model for model in permitted if is_local_model(model)],
+                configured_provider_id,
+                required=frozenset(required),
+                prefer_local=True,
+                privacy_profile=privacy_profile or "",
             )
 
     if selected is None:
@@ -93,13 +171,30 @@ def select_model(
     return selected
 
 
-def _preferred_provider(
-    candidates: Sequence[ModelInfo], provider_id: str
+def _best_candidate(
+    candidates: Sequence[ModelInfo],
+    provider_id: str,
+    *,
+    required: frozenset[str],
+    prefer_local: bool,
+    privacy_profile: str,
 ) -> ModelInfo | None:
-    return next(
-        (model for model in candidates if model.provider_id == provider_id),
-        candidates[0] if candidates else None,
-    )
+    if not candidates:
+        return None
+    return max(
+        enumerate(candidates),
+        key=lambda item: (
+            score_model(
+                item[1],
+                required_capabilities=required,
+                prefer_local=prefer_local,
+                privacy_profile=privacy_profile,
+                availability=True,
+            ),
+            item[1].provider_id == provider_id,
+            -item[0],
+        ),
+    )[1]
 
 
 def _permitted(
@@ -130,5 +225,6 @@ __all__ = [
     "LOCAL_PROVIDER_IDS",
     "ROUTING_MODES",
     "is_local_model",
+    "score_model",
     "select_model",
 ]
