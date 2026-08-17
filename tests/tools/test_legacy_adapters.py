@@ -25,6 +25,13 @@ def test_normalizer_preserves_native_tool_result() -> None:
     assert adapters.normalize_legacy_result(native) is native
 
 
+def test_normalizer_does_not_report_false_as_success() -> None:
+    result = adapters.normalize_legacy_result(False)
+
+    assert result.ok is False
+    assert result.code == "legacy.failed"
+
+
 def test_all_required_handlers_are_exposed() -> None:
     assert set(adapters.LEGACY_HANDLERS) == {
         "open_app",

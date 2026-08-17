@@ -27,8 +27,14 @@ def normalize_legacy_result(result: object) -> ToolResult:
         return ToolResult(ok=True, code="legacy.ok", message=result)
     if isinstance(result, dict):
         return ToolResult(ok=True, code="legacy.ok", data=result)
-    # A few existing actions (notably screen_process) return bool.  Preserve
-    # such values as data without inventing an error convention they never had.
+    if isinstance(result, bool):
+        return ToolResult(
+            ok=result,
+            code="legacy.ok" if result else "legacy.failed",
+            data=result,
+        )
+    # Preserve opaque legacy values as data. Adapters with a real failure
+    # convention must translate it explicitly instead of claiming success.
     return ToolResult(ok=True, code="legacy.ok", data=result)
 
 
