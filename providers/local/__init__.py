@@ -7,6 +7,10 @@ from providers.local.common import (
     DEFAULT_LOCAL_BASE_URL,
     DEFAULT_OLLAMA_BASE_URL,
 )
+from providers.local.capabilities import (
+    LocalModelCapabilities,
+    resolve_local_capabilities,
+)
 from providers.local.endpoint import is_loopback_url
 from providers.local.http import TransportResponse
 from providers.local.llama_cpp import LlamaCppChatProvider
@@ -32,9 +36,11 @@ __all__ = [
     "DEFAULT_OLLAMA_BASE_URL",
     "FACTORY_IDS",
     "LlamaCppChatProvider",
+    "LocalModelCapabilities",
     "OllamaChatProvider",
     "OpenAICompatibleChatProvider",
     "TransportResponse",
     "is_loopback_url",
     "register_factories",
+    "resolve_local_capabilities",
 ]

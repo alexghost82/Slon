@@ -20,6 +20,7 @@ from providers.errors import (
     ProviderError,
     ProviderOfflineError,
 )
+from providers.local.capabilities import resolve_local_capabilities
 from providers.local.endpoint import assert_endpoint_allowed, join_endpoint
 from providers.local.http import StdlibTransport, Transport, TransportResponse
 
@@ -196,8 +197,7 @@ class BaseLocalChatProvider:
             model_id = _catalog_model_id(item, ollama=self.protocol == PROTOCOL_OLLAMA)
             if model_id is None:
                 continue
-            source = item.get("owned_by") if isinstance(item, dict) else None
-            models.append(self._model_info(model_id, source))
+            models.append(self._model_info(model_id, item))
         return models
 
     def _parse_chat_message(self, payload: object) -> tuple[str, tuple[ToolCall, ...]]:
@@ -313,16 +313,27 @@ class BaseLocalChatProvider:
             if payload.get("done") is True:
                 return
 
-    def _model_info(self, model_id: str, source: object) -> ModelInfo:
+    def _model_info(self, model_id: str, runtime_metadata: object) -> ModelInfo:
+        metadata = runtime_metadata if isinstance(runtime_metadata, dict) else {}
+        source = metadata.get("owned_by")
         resolved_source = (
             source if isinstance(source, str) and source else self.provider_id
+        )
+        capabilities = resolve_local_capabilities(
+            self.provider_id,
+            model_id,
+            metadata,
         )
         return ModelInfo(
             provider_id=self.provider_id,
             model_id=model_id,
             display_name=model_id,
-            text=True,
-            streaming=True,
+            text=capabilities.text,
+            streaming=capabilities.streaming,
+            structured_output=capabilities.structured_output,
+            tool_calling=capabilities.tool_calling,
+            vision=capabilities.vision,
+            context_length=capabilities.context_length,
             local=True,
             source=resolved_source,
             license="",
