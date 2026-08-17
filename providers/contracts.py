@@ -6,7 +6,7 @@ network APIs or read secrets.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -44,6 +44,24 @@ class ChatMessage:
 
 
 @dataclass(frozen=True)
+class ToolDefinition:
+    """Provider-agnostic description of a tool available to a model."""
+
+    name: str
+    description: str
+    parameters: Mapping[str, object]
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    """Provider-agnostic tool invocation requested by a model."""
+
+    id: str
+    name: str
+    arguments: Mapping[str, object]
+
+
+@dataclass(frozen=True)
 class ChatRequest:
     """Provider-agnostic chat payload.
 
@@ -54,6 +72,8 @@ class ChatRequest:
     model: ModelInfo
     messages: Sequence[ChatMessage]
     role: str = "chat"
+    tools: Sequence[ToolDefinition] = ()
+    tool_choice: str | None = None
 
 
 @dataclass(frozen=True)
@@ -63,18 +83,21 @@ class ChatResponse:
     text: str
     provider_id: str
     model_id: str
+    tool_calls: tuple[ToolCall, ...] = ()
 
 
 @dataclass(frozen=True)
 class ChatEvent:
     """One item in a unified chat stream.
 
-    All providers emit the same shape: ``type`` is ``delta`` or ``done``;
-    ``text`` holds the incremental chunk (empty on done).
+    All providers emit the same shape: ``type`` is ``delta``, ``tool_call``,
+    or ``done``. ``text`` holds an incremental chunk and ``tool_call`` holds
+    a completed provider-agnostic invocation.
     """
 
     type: str
     text: str = ""
+    tool_call: ToolCall | None = None
 
 
 @dataclass(frozen=True)

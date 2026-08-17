@@ -8,6 +8,8 @@ from providers.contracts import (
     ChatResponse,
     ModelInfo,
     ProviderStatus,
+    ToolCall,
+    ToolDefinition,
 )
 
 from tests.unit.providers.mocks import MockChatProvider
@@ -61,6 +63,53 @@ def test_chat_event_shape_is_type_and_text() -> None:
     done = ChatEvent(type="done")
     assert done.type == "done"
     assert done.text == ""
+
+
+def test_tool_calling_contracts_are_provider_agnostic() -> None:
+    tool = ToolDefinition(
+        name="search_notes",
+        description="Search saved notes",
+        parameters={"type": "object", "properties": {"query": {"type": "string"}}},
+    )
+    call = ToolCall(id="call-1", name="search_notes", arguments={"query": "Slon"})
+    model = ModelInfo(
+        provider_id="ollama",
+        model_id="local-tools",
+        display_name="Local Tools",
+        text=True,
+        tool_calling=True,
+        local=True,
+    )
+
+    request = ChatRequest(
+        model=model,
+        messages=(ChatMessage(role="user", content="search"),),
+        tools=(tool,),
+        tool_choice="auto",
+    )
+    response = ChatResponse(
+        text="",
+        provider_id="ollama",
+        model_id="local-tools",
+        tool_calls=(call,),
+    )
+    event = ChatEvent(type="tool_call", tool_call=call)
+
+    assert request.tools == (tool,)
+    assert request.tool_choice == "auto"
+    assert response.tool_calls == (call,)
+    assert event.tool_call is call
+
+
+def test_text_only_contract_defaults_remain_backward_compatible() -> None:
+    model = ModelInfo(provider_id="mock", model_id="text", display_name="Text")
+    request = ChatRequest(model, (ChatMessage(role="user", content="hello"),))
+    response = ChatResponse("hello", "mock", "text")
+
+    assert request.tools == ()
+    assert request.tool_choice is None
+    assert response.tool_calls == ()
+    assert ChatEvent(type="done").tool_call is None
 
 
 def test_mock_provider_satisfies_chat_protocol() -> None:
