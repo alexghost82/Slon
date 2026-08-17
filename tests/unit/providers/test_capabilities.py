@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from providers.capabilities import require_capability, supports
+from providers.capabilities import (
+    require_capabilities,
+    require_capability,
+    supports,
+)
 from providers.contracts import ModelInfo
 from providers.errors import CapabilityError
 
@@ -76,3 +80,18 @@ def test_text_model_does_not_serve_vision() -> None:
     assert supports(model, "vision") is False
     with pytest.raises(CapabilityError, match="vision"):
         require_capability(model, "vision")
+
+
+def test_require_capabilities_accepts_all_supported_flags() -> None:
+    require_capabilities(
+        _model(text=True, tool_calling=True),
+        {"text", "tool_calling"},
+    )
+
+
+def test_require_capabilities_rejects_missing_and_unknown_flags() -> None:
+    model = _model(text=True, tool_calling=False)
+    with pytest.raises(CapabilityError, match="tool_calling") as exc_info:
+        require_capabilities(model, ("text", "tool_calling", "future_capability"))
+    assert exc_info.value.role == "tool_calling"
+    assert exc_info.value.model_id == model.model_id

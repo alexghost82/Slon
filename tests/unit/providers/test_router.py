@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from dataclasses import replace
 
 import pytest
 
@@ -11,6 +12,7 @@ from providers.contracts import (
     ChatResponse,
     ModelInfo,
     ProviderStatus,
+    ToolDefinition,
 )
 from providers.errors import CapabilityError, ProviderAuthError, ProviderError
 from providers.registry import register
@@ -96,12 +98,24 @@ def _request(
     role: str = "chat",
     text: bool = True,
     streaming: bool = True,
+    tool_calling: bool = False,
+    with_tools: bool = False,
 ) -> ChatRequest:
-    model = mock_model(provider_id, text=text, streaming=streaming)
+    base_model = mock_model(provider_id, text=text, streaming=streaming)
+    model = replace(base_model, tool_calling=tool_calling)
     return ChatRequest(
         model=model,
         messages=(ChatMessage(role="user", content=USER_TEXT),),
         role=role,
+        tools=(
+            ToolDefinition(
+                name="lookup",
+                description="Look up a value",
+                parameters={"type": "object", "properties": {}},
+            ),
+        )
+        if with_tools
+        else (),
     )
 
 
@@ -126,6 +140,41 @@ async def test_capability_failure_does_not_call_provider() -> None:
     assert provider.chat_calls == 0
     assert exc_info.value.role == "chat"
     assert exc_info.value.model_id == request.model.model_id
+
+
+async def test_text_only_chat_without_tools_reaches_provider() -> None:
+    provider = RecordingProvider("local")
+    router = Router(provider_id="local", providers={"local": provider})
+    await router.chat(_request("local", text=True, tool_calling=False))
+    assert provider.chat_calls == 1
+
+
+async def test_text_only_model_with_tools_fails_before_provider_call() -> None:
+    provider = RecordingProvider("local")
+    router = Router(provider_id="local", providers={"local": provider})
+    request = _request("local", text=True, tool_calling=False, with_tools=True)
+    with pytest.raises(CapabilityError, match="tool_calling"):
+        await router.chat(request)
+    assert provider.chat_calls == 0
+
+
+async def test_text_only_model_with_tools_fails_before_provider_stream() -> None:
+    provider = RecordingProvider("local")
+    router = Router(provider_id="local", providers={"local": provider})
+    request = _request("local", text=True, tool_calling=False, with_tools=True)
+    with pytest.raises(CapabilityError, match="tool_calling"):
+        async for _event in router.stream(request):
+            pytest.fail("capability failure must occur before streaming")
+    assert provider.stream_calls == 0
+
+
+async def test_tool_capable_model_with_tools_reaches_provider() -> None:
+    provider = RecordingProvider("local")
+    router = Router(provider_id="local", providers={"local": provider})
+    request = _request("local", text=True, tool_calling=True, with_tools=True)
+    await router.chat(request)
+    assert provider.chat_calls == 1
+    assert provider.requests == [request]
 
 
 async def test_default_policy_never_falls_back() -> None:

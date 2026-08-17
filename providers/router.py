@@ -11,7 +11,7 @@ import importlib
 from collections.abc import AsyncIterator, Callable, Mapping
 from typing import Protocol, runtime_checkable
 
-from providers.capabilities import require_capability
+from providers.capabilities import require_capabilities, require_capability
 from providers.contracts import (
     ChatEvent,
     ChatProvider,
@@ -98,18 +98,18 @@ class Router:
         return await self._resolve(self.provider_id).validate()
 
     async def chat(self, request: ChatRequest) -> ChatResponse:
-        require_capability(request.model, request.role)
+        self._require_request_capabilities(request)
         try:
             return await self._resolve(self.provider_id).chat(request)
         except Exception as exc:
             fallback_id = self._fallback_provider_id(self.provider_id, exc)
             if fallback_id is None:
                 raise
-            require_capability(request.model, request.role)
+            self._require_request_capabilities(request)
             return await self._resolve(fallback_id).chat(request)
 
     async def stream(self, request: ChatRequest) -> AsyncIterator[ChatEvent]:
-        require_capability(request.model, request.role)
+        self._require_request_capabilities(request)
         yielded = False
         try:
             async for event in self._resolve(self.provider_id).stream(request):
@@ -122,9 +122,15 @@ class Router:
             fallback_id = self._fallback_provider_id(self.provider_id, exc)
             if fallback_id is None:
                 raise
-        require_capability(request.model, request.role)
+        self._require_request_capabilities(request)
         async for event in self._resolve(fallback_id).stream(request):
             yield _as_chat_event(event)
+
+    @staticmethod
+    def _require_request_capabilities(request: ChatRequest) -> None:
+        require_capability(request.model, request.role)
+        if request.tools:
+            require_capabilities(request.model, ("text", "tool_calling"))
 
     def _cloud_restricted(self) -> bool:
         return self.network_mode == "offline" or self.privacy_profile == "fully_local"
