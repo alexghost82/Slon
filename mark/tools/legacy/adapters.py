@@ -83,6 +83,7 @@ computer_control_handler = _action_handler(
 computer_settings_handler = _action_handler(
     "actions.computer_settings", "computer_settings"
 )
+cmd_control_handler = _action_handler("actions.cmd_control", "cmd_control")
 screen_process_handler = _action_handler("actions.screen_processor", "screen_process")
 reminder_handler = _action_handler("actions.reminder", "reminder")
 weather_report_handler = _action_handler("actions.weather_report", "weather_action")
@@ -135,6 +136,7 @@ LEGACY_HANDLERS: Mapping[str, LegacyHandler] = {
     "desktop_control": desktop_control_handler,
     "computer_control": computer_control_handler,
     "computer_settings": computer_settings_handler,
+    "cmd_control": cmd_control_handler,
     "screen_process": screen_process_handler,
     "reminder": reminder_handler,
     "weather_report": weather_report_handler,

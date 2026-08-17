@@ -18,6 +18,7 @@ _DESCRIPTIONS: Mapping[str, str] = {
     "desktop_control": "Inspect or control the desktop environment.",
     "computer_control": "Control supported computer operations.",
     "computer_settings": "Inspect or change computer settings.",
+    "cmd_control": "Run a supported local command task.",
     "screen_process": "Process visible screen text.",
     "reminder": "List, create, update, or cancel reminders.",
     "weather_report": "Get a weather report for a city.",

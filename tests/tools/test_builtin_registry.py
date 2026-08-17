@@ -16,6 +16,7 @@ EXPECTED_TOOLS = frozenset(
         "desktop_control",
         "computer_control",
         "computer_settings",
+        "cmd_control",
         "screen_process",
         "reminder",
         "weather_report",
@@ -77,7 +78,6 @@ def test_safety_only_tools_are_not_invented_without_handlers() -> None:
 
     assert safety_only == {
         "save_memory",
-        "cmd_control",
         "shutdown_jarvis",
         "generated_code",
     }

@@ -41,6 +41,7 @@ def test_all_required_handlers_are_exposed() -> None:
         "desktop_control",
         "computer_control",
         "computer_settings",
+        "cmd_control",
         "screen_process",
         "reminder",
         "weather_report",
