@@ -17,6 +17,20 @@ from mark.tools.contracts import ToolResult
 LegacyHandler = Callable[[Mapping[str, object]], ToolResult]
 
 
+def with_legacy_speak(
+    handler: Callable[[Mapping[str, object]], object],
+    speak: Callable[..., object] | None,
+) -> Callable[[Mapping[str, object]], object]:
+    """Bind one compatibility callback without adding it to model arguments."""
+    if speak is None or not getattr(handler, "_accepts_legacy_context", False):
+        return handler
+
+    def contextual_handler(args: Mapping[str, object]) -> object:
+        return handler(args, _speak=speak)  # type: ignore[call-arg]
+
+    return contextual_handler
+
+
 def normalize_legacy_result(result: object) -> ToolResult:
     """Convert the result conventions used by ``actions/*`` to ``ToolResult``."""
     if isinstance(result, ToolResult):
@@ -44,14 +58,17 @@ def _action_handler(
     *,
     accepts_speak: bool = False,
 ) -> LegacyHandler:
-    def handler(args: Mapping[str, object]) -> ToolResult:
+    def handler(
+        args: Mapping[str, object], *, _speak: Callable[..., object] | None = None
+    ) -> ToolResult:
         action = getattr(import_module(module_name), function_name)
         kwargs: dict[str, Any] = {"parameters": dict(args), "player": None}
         if accepts_speak:
-            kwargs["speak"] = None
+            kwargs["speak"] = _speak
         return normalize_legacy_result(action(**kwargs))
 
     handler.__name__ = f"{function_name}_handler"
+    handler._accepts_legacy_context = True  # type: ignore[attr-defined]
     return handler
 
 
@@ -60,8 +77,12 @@ web_search_handler = _action_handler("actions.web_search", "web_search")
 browser_control_handler = _action_handler("actions.browser_control", "browser_control")
 file_controller_handler = _action_handler("actions.file_controller", "file_controller")
 desktop_control_handler = _action_handler("actions.desktop", "desktop_control")
-computer_control_handler = _action_handler("actions.computer_control", "computer_control")
-computer_settings_handler = _action_handler("actions.computer_settings", "computer_settings")
+computer_control_handler = _action_handler(
+    "actions.computer_control", "computer_control"
+)
+computer_settings_handler = _action_handler(
+    "actions.computer_settings", "computer_settings"
+)
 screen_process_handler = _action_handler("actions.screen_processor", "screen_process")
 reminder_handler = _action_handler("actions.reminder", "reminder")
 weather_report_handler = _action_handler("actions.weather_report", "weather_action")
@@ -81,14 +102,18 @@ send_message_handler = _action_handler("actions.send_message", "send_message")
 code_helper_handler = _action_handler(
     "actions.code_helper", "code_helper", accepts_speak=True
 )
-dev_agent_handler = _action_handler("actions.dev_agent", "dev_agent", accepts_speak=True)
+dev_agent_handler = _action_handler(
+    "actions.dev_agent", "dev_agent", accepts_speak=True
+)
 
 
 def agent_task_handler(args: Mapping[str, object]) -> ToolResult:
     """Preserve the existing asynchronous task-queue bridge from ``main.py``."""
     task_queue = import_module("agent.task_queue")
     priority_value = args.get("priority", "normal")
-    priority_name = priority_value.lower() if isinstance(priority_value, str) else "normal"
+    priority_name = (
+        priority_value.lower() if isinstance(priority_value, str) else "normal"
+    )
     priority_map = {
         "low": task_queue.TaskPriority.LOW,
         "normal": task_queue.TaskPriority.NORMAL,
@@ -124,4 +149,10 @@ LEGACY_HANDLERS: Mapping[str, LegacyHandler] = {
 }
 
 
-__all__ = ["LEGACY_HANDLERS", "LegacyHandler", "agent_task_handler", "normalize_legacy_result"]
+__all__ = [
+    "LEGACY_HANDLERS",
+    "LegacyHandler",
+    "agent_task_handler",
+    "normalize_legacy_result",
+    "with_legacy_speak",
+]
