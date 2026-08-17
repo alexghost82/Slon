@@ -7,7 +7,7 @@ import pytest
 
 import config
 from config.schema import validate_settings
-from config.settings import save_settings
+from config.settings import load_settings, save_settings
 
 
 def test_missing_api_keys_does_not_raise_from_get_config(isolated_paths):
@@ -63,3 +63,24 @@ def test_settings_example_has_no_secret_values():
                 walk(item)
 
     walk(payload)
+
+
+def test_local_model_settings_persist_offline(tmp_path):
+    path = tmp_path / "settings.json"
+    expected = validate_settings(
+        {
+            "network_mode": "offline",
+            "routing_mode": "local_only",
+            "local_models": {
+                "default_provider": "ollama",
+                "preferred": {"planning": "qwen-local"},
+                "overrides": {
+                    "qwen-local": {"tool_calling": True, "context_length": 8192}
+                },
+            },
+        }
+    )
+
+    save_settings(expected, path)
+
+    assert load_settings(path) == expected
