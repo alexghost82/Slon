@@ -120,10 +120,10 @@ class BaseLocalChatProvider:
         require_capability(request.model, request.role)
         self._require_tool_capability(request)
         if request.tools and self.protocol == PROTOCOL_OLLAMA:
-            response = await self.chat(request)
-            if response.text:
-                yield ChatEvent(type="delta", text=response.text)
-            for tool_call in response.tool_calls:
+            chat_response = await self.chat(request)
+            if chat_response.text:
+                yield ChatEvent(type="delta", text=chat_response.text)
+            for tool_call in chat_response.tool_calls:
                 yield ChatEvent(type="tool_call", tool_call=tool_call)
             yield ChatEvent(type="done")
             return
@@ -210,7 +210,9 @@ class BaseLocalChatProvider:
             message = payload.get("message")
             if isinstance(message, dict):
                 content = message.get("content")
-                tool_calls = _ollama_tool_calls(message.get("tool_calls"), self.provider_id)
+                tool_calls = _ollama_tool_calls(
+                    message.get("tool_calls"), self.provider_id
+                )
                 if isinstance(content, str) and (content or tool_calls):
                     return content, tool_calls
             raise ProviderError(
@@ -230,8 +232,13 @@ class BaseLocalChatProvider:
                 provider_id=self.provider_id,
             )
         message = first.get("message")
-        if isinstance(message, dict) and isinstance(message.get("content"), str):
-            return message["content"], ()
+        if isinstance(message, dict):
+            content = message.get("content")
+            tool_calls = _openai_tool_calls(message.get("tool_calls"), self.provider_id)
+            if isinstance(content, str):
+                return content, tool_calls
+            if content is None and tool_calls:
+                return "", tool_calls
         raise ProviderError(
             "chat payload is missing message content",
             provider_id=self.provider_id,
@@ -244,6 +251,13 @@ class BaseLocalChatProvider:
     async def _iter_openai_stream(
         self, response: TransportResponse
     ) -> AsyncIterator[ChatEvent]:
+        pending_calls: dict[int, dict[str, str]] = {}
+
+        def completed_calls() -> tuple[ToolCall, ...]:
+            calls = _openai_stream_tool_calls(pending_calls, self.provider_id)
+            pending_calls.clear()
+            return calls
+
         for line in response.iter_lines():
             stripped = line.strip()
             if not stripped or stripped.startswith(":"):
@@ -252,6 +266,8 @@ class BaseLocalChatProvider:
                 continue
             data = stripped[5:].strip()
             if data == "[DONE]":
+                for tool_call in completed_calls():
+                    yield ChatEvent(type="tool_call", tool_call=tool_call)
                 return
             try:
                 payload = json.loads(data)
@@ -263,6 +279,12 @@ class BaseLocalChatProvider:
             text = _openai_delta_text(payload)
             if text:
                 yield ChatEvent(type="delta", text=text)
+            _accumulate_openai_tool_deltas(payload, pending_calls, self.provider_id)
+            if _openai_finish_reason(payload) == "tool_calls":
+                for tool_call in completed_calls():
+                    yield ChatEvent(type="tool_call", tool_call=tool_call)
+        for tool_call in completed_calls():
+            yield ChatEvent(type="tool_call", tool_call=tool_call)
 
     async def _iter_ollama_stream(
         self, response: TransportResponse
@@ -292,7 +314,9 @@ class BaseLocalChatProvider:
                 return
 
     def _model_info(self, model_id: str, source: object) -> ModelInfo:
-        resolved_source = source if isinstance(source, str) and source else self.provider_id
+        resolved_source = (
+            source if isinstance(source, str) and source else self.provider_id
+        )
         return ModelInfo(
             provider_id=self.provider_id,
             model_id=model_id,
@@ -383,6 +407,124 @@ def _openai_delta_text(payload: object) -> str:
         return ""
     text = delta.get("content")
     return text if isinstance(text, str) else ""
+
+
+def _openai_first_choice(payload: object) -> dict[str, object] | None:
+    if not isinstance(payload, dict):
+        return None
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        return None
+    return choices[0]
+
+
+def _openai_finish_reason(payload: object) -> object:
+    choice = _openai_first_choice(payload)
+    return choice.get("finish_reason") if choice is not None else None
+
+
+def _openai_tool_calls(value: object, provider_id: str) -> tuple[ToolCall, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ProviderError(
+            "chat payload has invalid tool calls", provider_id=provider_id
+        )
+    calls: list[ToolCall] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict) or not isinstance(item.get("function"), dict):
+            raise ProviderError(
+                "chat payload has invalid tool calls", provider_id=provider_id
+            )
+        function = item["function"]
+        name = function.get("name")
+        arguments = _openai_arguments(function.get("arguments"), provider_id)
+        if not isinstance(name, str) or not name:
+            raise ProviderError(
+                "chat payload has invalid tool calls", provider_id=provider_id
+            )
+        call_id = item.get("id")
+        if not isinstance(call_id, str) or not call_id:
+            call_id = f"openai-call-{index}"
+        calls.append(ToolCall(id=call_id, name=name, arguments=arguments))
+    return tuple(calls)
+
+
+def _openai_arguments(value: object, provider_id: str) -> dict[str, object]:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str):
+        raise ProviderError(
+            "chat payload has invalid tool call arguments", provider_id=provider_id
+        )
+    try:
+        arguments = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ProviderError(
+            "chat payload has invalid tool call arguments", provider_id=provider_id
+        ) from exc
+    if not isinstance(arguments, dict):
+        raise ProviderError(
+            "chat payload has invalid tool call arguments", provider_id=provider_id
+        )
+    return arguments
+
+
+def _accumulate_openai_tool_deltas(
+    payload: object,
+    pending: dict[int, dict[str, str]],
+    provider_id: str,
+) -> None:
+    choice = _openai_first_choice(payload)
+    delta = choice.get("delta") if choice is not None else None
+    if not isinstance(delta, dict) or delta.get("tool_calls") is None:
+        return
+    values = delta["tool_calls"]
+    if not isinstance(values, list):
+        raise ProviderError(
+            "local runtime returned invalid streamed tool calls",
+            provider_id=provider_id,
+        )
+    for value in values:
+        if not isinstance(value, dict) or not isinstance(value.get("index"), int):
+            raise ProviderError(
+                "local runtime returned invalid streamed tool calls",
+                provider_id=provider_id,
+            )
+        index = value["index"]
+        call = pending.setdefault(index, {"id": "", "name": "", "arguments": ""})
+        call_id = value.get("id")
+        if isinstance(call_id, str):
+            call["id"] += call_id
+        function = value.get("function")
+        if isinstance(function, dict):
+            name = function.get("name")
+            arguments = function.get("arguments")
+            if isinstance(name, str):
+                call["name"] += name
+            if isinstance(arguments, str):
+                call["arguments"] += arguments
+
+
+def _openai_stream_tool_calls(
+    pending: dict[int, dict[str, str]], provider_id: str
+) -> tuple[ToolCall, ...]:
+    calls: list[ToolCall] = []
+    for index, fragments in sorted(pending.items()):
+        name = fragments["name"]
+        if not name:
+            raise ProviderError(
+                "local runtime returned incomplete streamed tool call",
+                provider_id=provider_id,
+            )
+        calls.append(
+            ToolCall(
+                id=fragments["id"] or f"openai-call-{index}",
+                name=name,
+                arguments=_openai_arguments(fragments["arguments"], provider_id),
+            )
+        )
+    return tuple(calls)
 
 
 def _ollama_tool_calls(value: object, provider_id: str) -> tuple[ToolCall, ...]:
