@@ -22,8 +22,15 @@ async def _request_for(
     )
 
 
-async def test_same_chat_request_works_against_four_mocks(registered_mocks) -> None:
-    expected_ids = ("gemini", "local", "openai", "openrouter")
+async def test_same_chat_request_works_against_all_registered_mocks(registered_mocks) -> None:
+    expected_ids = (
+        "gemini",
+        "llama_cpp",
+        "local",
+        "ollama",
+        "openai",
+        "openrouter",
+    )
     assert registered_mocks == expected_ids
 
     responses = []
