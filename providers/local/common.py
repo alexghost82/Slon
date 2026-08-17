@@ -12,8 +12,14 @@ from providers.contracts import (
     ChatResponse,
     ModelInfo,
     ProviderStatus,
+    ToolCall,
 )
-from providers.errors import ProviderAuthError, ProviderError, ProviderOfflineError
+from providers.errors import (
+    CapabilityError,
+    ProviderAuthError,
+    ProviderError,
+    ProviderOfflineError,
+)
 from providers.local.endpoint import assert_endpoint_allowed, join_endpoint
 from providers.local.http import StdlibTransport, Transport, TransportResponse
 
@@ -88,6 +94,7 @@ class BaseLocalChatProvider:
 
     async def chat(self, request: ChatRequest) -> ChatResponse:
         require_capability(request.model, request.role)
+        self._require_tool_capability(request)
         response = self._request(
             "POST",
             self.chat_path,
@@ -101,14 +108,25 @@ class BaseLocalChatProvider:
                 "local runtime returned an invalid chat payload",
                 provider_id=self.provider_id,
             ) from exc
+        text, tool_calls = self._parse_chat_message(payload)
         return ChatResponse(
-            text=self._parse_chat_text(payload),
+            text=text,
             provider_id=self.provider_id,
             model_id=request.model.model_id,
+            tool_calls=tool_calls,
         )
 
     async def stream(self, request: ChatRequest) -> AsyncIterator[ChatEvent]:
         require_capability(request.model, request.role)
+        self._require_tool_capability(request)
+        if request.tools and self.protocol == PROTOCOL_OLLAMA:
+            response = await self.chat(request)
+            if response.text:
+                yield ChatEvent(type="delta", text=response.text)
+            for tool_call in response.tool_calls:
+                yield ChatEvent(type="tool_call", tool_call=tool_call)
+            yield ChatEvent(type="done")
+            return
         response = self._request(
             "POST",
             self.chat_path,
@@ -129,11 +147,37 @@ class BaseLocalChatProvider:
             {"role": message.role, "content": message.content}
             for message in request.messages
         ]
-        return {
+        payload: dict[str, object] = {
             "model": request.model.model_id,
             "messages": messages,
             "stream": stream,
         }
+        if request.tools:
+            payload["tools"] = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": dict(tool.parameters),
+                    },
+                }
+                for tool in request.tools
+            ]
+            # Ollama's native /api/chat contract supports tools, but does not
+            # define OpenAI's tool_choice field.
+            if request.tool_choice is not None and self.protocol != PROTOCOL_OLLAMA:
+                payload["tool_choice"] = request.tool_choice
+        return payload
+
+    def _require_tool_capability(self, request: ChatRequest) -> None:
+        if request.tools and not request.model.tool_calling:
+            raise CapabilityError(
+                f"model {request.model.model_id!r} does not support tool calling",
+                provider_id=request.model.provider_id,
+                role=request.role,
+                model_id=request.model.model_id,
+            )
 
     def _parse_models(self, payload: object) -> list[ModelInfo]:
         if not isinstance(payload, dict):
@@ -156,7 +200,7 @@ class BaseLocalChatProvider:
             models.append(self._model_info(model_id, source))
         return models
 
-    def _parse_chat_text(self, payload: object) -> str:
+    def _parse_chat_message(self, payload: object) -> tuple[str, tuple[ToolCall, ...]]:
         if not isinstance(payload, dict):
             raise ProviderError(
                 "local runtime returned an invalid chat payload",
@@ -164,8 +208,11 @@ class BaseLocalChatProvider:
             )
         if self.protocol == PROTOCOL_OLLAMA:
             message = payload.get("message")
-            if isinstance(message, dict) and isinstance(message.get("content"), str):
-                return message["content"]
+            if isinstance(message, dict):
+                content = message.get("content")
+                tool_calls = _ollama_tool_calls(message.get("tool_calls"), self.provider_id)
+                if isinstance(content, str) and (content or tool_calls):
+                    return content, tool_calls
             raise ProviderError(
                 "ollama chat payload is missing message content",
                 provider_id=self.provider_id,
@@ -184,11 +231,15 @@ class BaseLocalChatProvider:
             )
         message = first.get("message")
         if isinstance(message, dict) and isinstance(message.get("content"), str):
-            return message["content"]
+            return message["content"], ()
         raise ProviderError(
             "chat payload is missing message content",
             provider_id=self.provider_id,
         )
+
+    def _parse_chat_text(self, payload: object) -> str:
+        """Compatibility helper retained for text-only callers."""
+        return self._parse_chat_message(payload)[0]
 
     async def _iter_openai_stream(
         self, response: TransportResponse
@@ -332,3 +383,34 @@ def _openai_delta_text(payload: object) -> str:
         return ""
     text = delta.get("content")
     return text if isinstance(text, str) else ""
+
+
+def _ollama_tool_calls(value: object, provider_id: str) -> tuple[ToolCall, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ProviderError(
+            "ollama chat payload has invalid tool calls", provider_id=provider_id
+        )
+    calls: list[ToolCall] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            raise ProviderError(
+                "ollama chat payload has invalid tool calls", provider_id=provider_id
+            )
+        function = item.get("function")
+        if not isinstance(function, dict):
+            raise ProviderError(
+                "ollama chat payload has invalid tool calls", provider_id=provider_id
+            )
+        name = function.get("name")
+        arguments = function.get("arguments")
+        if not isinstance(name, str) or not name or not isinstance(arguments, dict):
+            raise ProviderError(
+                "ollama chat payload has invalid tool calls", provider_id=provider_id
+            )
+        call_id = item.get("id")
+        if not isinstance(call_id, str) or not call_id:
+            call_id = f"ollama-call-{index}"
+        calls.append(ToolCall(id=call_id, name=name, arguments=arguments))
+    return tuple(calls)
