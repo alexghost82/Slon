@@ -3,6 +3,9 @@ import re
 import sys
 from pathlib import Path
 
+from mark.tools.builtin import build_builtin_registry
+from mark.tools.registry import ToolRegistry
+
 
 def get_base_dir() -> Path:
     if getattr(sys, "frozen", False):
@@ -15,146 +18,14 @@ API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 
 
 PLANNER_PROMPT = """You are the planning module of Slon, a personal AI assistant.
-Your job: break any user goal into a sequence of steps using ONLY the tools listed below.
+Your job: break any user goal into a sequence of steps using ONLY the tools in the
+canonical catalog appended to these instructions.
 
 ABSOLUTE RULES:
 - NEVER use generated_code or write Python scripts. It does not exist.
 - NEVER reference previous step results in parameters. Every step is independent.
-- Use web_search for ANY information retrieval, research, or current data.
-- Use file_controller to save content to disk.
-- Use cmd_control to open files or run system commands.
+- Choose tools and parameters only from the appended canonical catalog.
 - Max 5 steps. Use the minimum steps needed.
-
-AVAILABLE TOOLS AND THEIR PARAMETERS:
-
-open_app
-  app_name: string (required)
-
-web_search
-  query: string (required) — write a clear, focused search query
-  mode: "search" or "compare" (optional, default: search)
-  items: list of strings (optional, for compare mode)
-  aspect: string (optional, for compare mode)
-
-game_updater
-  action: "update" | "install" | "list" | "download_status" | "schedule" (required)
-  platform: "steam" | "epic" | "both" (optional, default: both)
-  game_name: string (optional)
-  app_id: string (optional)
-  shutdown_when_done: boolean (optional)
-
-browser_control
-  action: "go_to" | "search" | "click" | "type" | "scroll" | "get_text" | "press" | "close" (required)
-  url: string (for go_to)
-  query: string (for search)
-  text: string (for click/type)
-  direction: "up" | "down" (for scroll)
-
-file_controller
-  action: "write" | "create_file" | "read" | "list" | "delete" | "move" | "copy" | "find" | "disk_usage" (required)
-  path: string — use "desktop" for Desktop folder
-  name: string — filename
-  content: string — file content (for write/create_file)
-
-cmd_control
-  task: string (required) — natural language description of what to do
-  visible: boolean (optional)
-
-computer_settings
-  action: string (required)
-  description: string — natural language description
-  value: string (optional)
-
-computer_control
-  action: "type" | "click" | "hotkey" | "press" | "scroll" | "screenshot" | "screen_find" | "screen_click" (required)
-  text: string (for type)
-  x, y: int (for click)
-  keys: string (for hotkey, e.g. "ctrl+c")
-  key: string (for press)
-  direction: "up" | "down" (for scroll)
-  description: string (for screen_find/screen_click)
-
-screen_process
-  text: string (required) — what to analyze or ask about the screen
-  angle: "screen" | "camera" (optional)
-
-send_message
-  receiver: string (required)
-  message_text: string (required)
-  platform: string (required)
-
-reminder
-  date: string YYYY-MM-DD (required)
-  time: string HH:MM (required)
-  message: string (required)
-
-desktop_control
-  action: "wallpaper" | "organize" | "clean" | "list" | "task" (required)
-  path: string (optional)
-  task: string (optional)
-
-youtube_video
-  action: "play" | "summarize" | "trending" (required)
-  query: string (for play)
-
-weather_report
-  city: string (required)
-
-flight_finder
-  origin: string (required)
-  destination: string (required)
-  date: string (required)
-
-code_helper
-  action: "write" | "edit" | "run" | "explain" (required)
-  description: string (required)
-  language: string (optional)
-  output_path: string (optional)
-  file_path: string (optional)
-
-dev_agent
-  description: string (required)
-  language: string (optional)
-EXAMPLES:
-
-Goal: "research mechanical engineering and save it to a notepad file"
-Steps:
-
-web_search | query: "mechanical engineering overview definition history"
-web_search | query: "mechanical engineering applications and future trends"
-file_controller | action: write, path: desktop, name: mechanical_engineering.txt, content: "MECHANICAL ENGINEERING RESEARCH\n\nThis file will be filled with web research results."
-cmd_control | task: "open mechanical_engineering.txt on desktop with notepad"
-
-Goal: "What is the price of Bitcoin"
-Steps:
-
-web_search | query: "Bitcoin price today USD"
-
-Goal: "List the files on the desktop and find the largest 5 files"
-Steps:
-
-file_controller | action: list, path: desktop
-file_controller | action: largest, path: desktop, count: 5
-
-Goal: "Install PUBG from Steam"
-Steps:
-
-game_updater | action: install, platform: steam, game_name: "PUBG"
-
-Goal: "Update all my Steam games"
-Steps:
-
-game_updater | action: update, platform: steam
-
-Goal: "Send John a message on WhatsApp saying there is a meeting tomorrow"
-Steps:
-
-send_message | receiver: John, message_text: "There is a meeting tomorrow", platform: WhatsApp
-
-Goal: "Open the clock and set a reminder for 30 minutes later"
-Steps:
-
-reminder | date: [today], time: [now+30min], message: "Reminder"
 
 OUTPUT — return ONLY valid JSON, no markdown, no explanation, no code blocks:
 {
@@ -172,18 +43,47 @@ OUTPUT — return ONLY valid JSON, no markdown, no explanation, no code blocks:
 """
 
 
+def render_planner_tool_catalog(registry: ToolRegistry) -> str:
+    """Render planner-visible metadata from the canonical registry."""
+    entries = []
+    for spec in registry.list():
+        schema = json.dumps(
+            spec.input_schema,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        entries.append(
+            f"{spec.name}\n"
+            f"  description: {spec.description}\n"
+            f"  input_schema: {schema}"
+        )
+    return "AVAILABLE TOOLS (CANONICAL CATALOG):\n\n" + "\n\n".join(entries)
+
+
+def _system_instruction(registry: ToolRegistry | None) -> str:
+    selected_registry = registry if registry is not None else build_builtin_registry()
+    catalog = render_planner_tool_catalog(selected_registry)
+    return f"{PLANNER_PROMPT.rstrip()}\n\n{catalog}"
+
+
 def _get_api_key() -> str:
     with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
         return json.load(f)["gemini_api_key"]
 
 
-def create_plan(goal: str, context: str = "") -> dict:
+def create_plan(
+    goal: str,
+    context: str = "",
+    *,
+    registry: ToolRegistry | None = None,
+) -> dict:
     import google.generativeai as genai
 
     genai.configure(api_key=_get_api_key())
     model = genai.GenerativeModel(
         model_name="gemini-2.5-flash-lite",
-        system_instruction=PLANNER_PROMPT
+        system_instruction=_system_instruction(registry)
     )
 
     user_input = f"Goal: {goal}"
@@ -202,7 +102,10 @@ def create_plan(goal: str, context: str = "") -> dict:
 
         for step in plan["steps"]:
             if step.get("tool") in ("generated_code",):
-                print(f"[Planner] ⚠️ generated_code detected in step {step.get('step')} — replacing with web_search")
+                print(
+                    "[Planner] ⚠️ generated_code detected in step "
+                    f"{step.get('step')} — replacing with web_search"
+                )
                 desc = step.get("description", goal)
                 step["tool"] = "web_search"
                 step["parameters"] = {"query": desc[:200]}
@@ -237,13 +140,20 @@ def _fallback_plan(goal: str) -> dict:
     }
 
 
-def replan(goal: str, completed_steps: list, failed_step: dict, error: str) -> dict:
+def replan(
+    goal: str,
+    completed_steps: list,
+    failed_step: dict,
+    error: str,
+    *,
+    registry: ToolRegistry | None = None,
+) -> dict:
     import google.generativeai as genai
 
     genai.configure(api_key=_get_api_key())
     model = genai.GenerativeModel(
         model_name="gemini-2.5-flash",
-        system_instruction=PLANNER_PROMPT
+        system_instruction=_system_instruction(registry)
     )
 
     completed_summary = "\n".join(
