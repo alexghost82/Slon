@@ -289,6 +289,7 @@ _REGISTRY: dict[str, SafetyRule] = {
             ),
         ),
     ),
+    "shutdown_slon": SafetyRule(RiskLevel.BIOMETRIC),
     "shutdown_jarvis": SafetyRule(RiskLevel.BIOMETRIC),
     "generated_code": SafetyRule(
         RiskLevel.BIOMETRIC,

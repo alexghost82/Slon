@@ -78,6 +78,7 @@ def test_safety_only_tools_are_not_invented_without_handlers() -> None:
 
     assert safety_only == {
         "save_memory",
+        "shutdown_slon",
         "shutdown_jarvis",
         "generated_code",
     }
