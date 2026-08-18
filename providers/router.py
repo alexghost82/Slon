@@ -9,18 +9,21 @@ from __future__ import annotations
 
 import importlib
 from collections.abc import AsyncIterator, Callable, Mapping
+from dataclasses import replace
 from typing import Protocol, runtime_checkable
 
-from providers.capabilities import require_capability
+from providers.capabilities import require_capabilities, require_capability
 from providers.contracts import (
     ChatEvent,
     ChatProvider,
     ChatRequest,
     ChatResponse,
+    ModelInfo,
     ProviderStatus,
 )
 from providers.errors import ProviderAuthError, ProviderError
 from providers.registry import get
+from providers.routing import select_model
 
 CLOUD_PROVIDER_IDS = frozenset({"gemini", "openai", "openrouter"})
 LOCAL_PROVIDER_IDS = frozenset({"local", "ollama", "llama_cpp"})
@@ -68,12 +71,20 @@ class Router:
         key_provider: KeyProvider | None = None,
         providers: Mapping[str, ChatProvider] | None = None,
         fallback_policy: FallbackPolicy | None = None,
+        routing_mode: str | None = None,
+        models: tuple[ModelInfo, ...] = (),
+        model_availability: Mapping[object, bool] | None = None,
+        configured_model_id: str | None = None,
     ) -> None:
         if not isinstance(provider_id, str) or not provider_id.strip():
             raise ProviderError("provider_id must be a non-empty string")
         self.provider_id = provider_id
         self.network_mode = network_mode
         self.privacy_profile = privacy_profile
+        self.routing_mode = routing_mode
+        self._models = models
+        self._model_availability = model_availability
+        self._configured_model_id = configured_model_id
         self._key_provider = key_provider
         self._injected = dict(providers) if providers is not None else {}
         self._fallback_policy: FallbackPolicy = (
@@ -98,45 +109,80 @@ class Router:
         return await self._resolve(self.provider_id).validate()
 
     async def chat(self, request: ChatRequest) -> ChatResponse:
-        require_capability(request.model, request.role)
+        request = self._route_request(request)
+        self._require_request_capabilities(request)
         try:
-            return await self._resolve(self.provider_id).chat(request)
+            return await self._resolve(request.model.provider_id).chat(request)
         except Exception as exc:
-            fallback_id = self._fallback_provider_id(self.provider_id, exc)
+            fallback_id = self._fallback_provider_id(request.model.provider_id, exc)
             if fallback_id is None:
                 raise
-            require_capability(request.model, request.role)
+            self._require_request_capabilities(request)
             return await self._resolve(fallback_id).chat(request)
 
     async def stream(self, request: ChatRequest) -> AsyncIterator[ChatEvent]:
-        require_capability(request.model, request.role)
+        request = self._route_request(request)
+        self._require_request_capabilities(request)
         yielded = False
         try:
-            async for event in self._resolve(self.provider_id).stream(request):
+            async for event in self._resolve(request.model.provider_id).stream(request):
                 yielded = True
                 yield _as_chat_event(event)
             return
         except Exception as exc:
             if yielded:
                 raise
-            fallback_id = self._fallback_provider_id(self.provider_id, exc)
+            fallback_id = self._fallback_provider_id(request.model.provider_id, exc)
             if fallback_id is None:
                 raise
-        require_capability(request.model, request.role)
+        self._require_request_capabilities(request)
         async for event in self._resolve(fallback_id).stream(request):
             yield _as_chat_event(event)
 
+    @staticmethod
+    def _require_request_capabilities(request: ChatRequest) -> None:
+        require_capability(request.model, request.role)
+        if request.tools:
+            require_capabilities(request.model, ("text", "tool_calling"))
+
     def _cloud_restricted(self) -> bool:
-        return self.network_mode == "offline" or self.privacy_profile == "fully_local"
+        return (
+            self.network_mode in {"offline", "tools_only"}
+            or self.privacy_profile in {"fully_local", "local_with_tools"}
+        )
 
     def _cloud_allowed(self, provider_id: str) -> bool:
+        if self.routing_mode == "local_only" and provider_id in CLOUD_PROVIDER_IDS:
+            return False
         return provider_id not in CLOUD_PROVIDER_IDS or not self._cloud_restricted()
+
+    def _route_request(self, request: ChatRequest) -> ChatRequest:
+        if self.routing_mode is None:
+            return request
+        candidates = self._models or (request.model,)
+        required = ("text", "tool_calling") if request.tools else ()
+        model = select_model(
+            candidates,
+            routing_mode=self.routing_mode,
+            configured_provider_id=self.provider_id,
+            configured_model_id=self._configured_model_id,
+            required_role=request.role,
+            required_capabilities=required,
+            availability=self._model_availability,
+            network_mode=self.network_mode,
+            privacy_profile=self.privacy_profile,
+        )
+        return request if model is request.model else replace(request, model=model)
 
     def _restriction_reason(self) -> str:
         if self.network_mode == "offline":
             return "network_mode='offline'"
+        if self.network_mode == "tools_only":
+            return "network_mode='tools_only'"
         if self.privacy_profile == "fully_local":
             return "privacy_profile='fully_local'"
+        if self.privacy_profile == "local_with_tools":
+            return "privacy_profile='local_with_tools'"
         return "cloud access is disabled"
 
     def _cloud_forbidden_message(self, provider_id: str) -> str:

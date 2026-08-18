@@ -16,6 +16,10 @@ def test_defaults_use_russian_language():
     assert settings.privacy_profile == "hybrid"
     assert settings.provider_id == "gemini"
     assert settings.network_mode == "hybrid"
+    assert settings.routing_mode == "manual"
+    assert settings.local_models.default_provider == "ollama"
+    assert settings.local_models.ollama.base_url == "http://127.0.0.1:11434"
+    assert settings.local_models.llama_cpp.base_url == "http://127.0.0.1:8080"
     assert settings.os_system is None
 
 
@@ -81,3 +85,63 @@ def test_rejects_non_object_payload():
 
 def test_default_settings_round_trip():
     assert default_settings() == validate_settings(default_settings().to_dict())
+
+
+def test_local_models_config_round_trip():
+    settings = validate_settings(
+        {
+            "provider_id": "llama_cpp",
+            "routing_mode": "local_only",
+            "local_models": {
+                "default_provider": "local",
+                "ollama": {"enabled": False, "base_url": "http://localhost:11434"},
+                "llama_cpp": {"enabled": True, "base_url": "http://127.0.0.1:9000"},
+                "preferred": {"chat": "qwen", "utility": "tiny"},
+                "overrides": {
+                    "qwen": {
+                        "tool_calling": True,
+                        "structured_output": True,
+                        "vision": False,
+                        "context_length": 32768,
+                    }
+                },
+            },
+        }
+    )
+
+    assert settings == validate_settings(settings.to_dict())
+    assert settings.local_models.preferred.chat == "qwen"
+    assert settings.local_models.overrides["qwen"].tool_calling is True
+
+
+@pytest.mark.parametrize("provider_id", ["local", "ollama", "llama_cpp"])
+def test_all_local_provider_ids_are_supported(provider_id):
+    assert validate_settings({"provider_id": provider_id}).provider_id == provider_id
+
+
+@pytest.mark.parametrize(
+    "payload,match",
+    [
+        ({"routing_mode": "automatic"}, "routing_mode"),
+        ({"local_models": []}, "local_models must be an object"),
+        ({"local_models": {"ollama": {"enabled": 1}}}, "enabled"),
+        ({"local_models": {"llama_cpp": {"base_url": ""}}}, "base_url"),
+        (
+            {"local_models": {"overrides": {"m": {"tool_calling": "yes"}}}},
+            "tool_calling",
+        ),
+        (
+            {"local_models": {"overrides": {"m": {"context_length": True}}}},
+            "context_length",
+        ),
+        (
+            {"local_models": {"overrides": {"m": {"context_length": 0}}}},
+            "context_length",
+        ),
+        ({"local_models": {"overrides": {"": {}}}}, "model ids"),
+        ({"local_models": {"preferred": {"vision": "m"}}}, "unknown field"),
+    ],
+)
+def test_rejects_malformed_local_model_config(payload, match):
+    with pytest.raises(SettingsValidationError, match=match):
+        validate_settings(payload)

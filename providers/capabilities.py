@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
+
 from config.schema import MODEL_ROLE_KEYS
 
 from providers.contracts import ModelInfo
@@ -39,5 +41,27 @@ def require_capability(model: ModelInfo, role: str) -> None:
             f"model {model.model_id!r} does not support role {role!r}",
             provider_id=model.provider_id,
             role=role,
+            model_id=model.model_id,
+        )
+
+
+def require_capabilities(model: ModelInfo, required: Collection[str]) -> None:
+    """Require every named capability before constructing a provider request.
+
+    Capability names are :class:`ModelInfo` boolean fields. Unknown names are
+    deliberately treated as unsupported, which keeps local model capability
+    discovery conservative.
+    """
+    missing = tuple(
+        capability
+        for capability in dict.fromkeys(required)
+        if not bool(getattr(model, capability, False))
+    )
+    if missing:
+        names = ", ".join(repr(capability) for capability in missing)
+        raise CapabilityError(
+            f"model {model.model_id!r} does not support required capabilities: {names}",
+            provider_id=model.provider_id,
+            role=missing[0],
             model_id=model.model_id,
         )

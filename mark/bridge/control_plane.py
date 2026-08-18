@@ -22,7 +22,7 @@ class ControlPlaneUnavailable(RuntimeError):
 class DesktopControlPlane:
     """Single source of truth for remote-visible desktop state.
 
-    It owns no sockets and no secrets. PyQt and ``JarvisLive`` update it, while
+    It owns no sockets and no secrets. PyQt and ``SlonLive`` update it, while
     ``DesktopControlListener`` reads snapshots and dispatches approved commands.
     """
 

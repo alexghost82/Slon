@@ -137,11 +137,12 @@ def update_memory(memory_update: dict) -> dict:
     return memory
 
 
-def should_extract_memory(user_text: str, jarvis_text: str, api_key: str = "") -> bool:
+def should_extract_memory(user_text: str, slon_text: str = "", api_key: str = "", jarvis_text: str = "") -> bool:
     try:
         from or_client import client
 
-        combined = f"User: {user_text[:300]}\nJarvis: {jarvis_text[:1000]}"
+        assistant_msg = slon_text or jarvis_text
+        combined = f"User: {user_text[:300]}\nAssistant: {assistant_msg[:1000]}"
 
         result = client.chat(
             f"Does this conversation contain ANY of the following?\n"
@@ -163,11 +164,12 @@ def should_extract_memory(user_text: str, jarvis_text: str, api_key: str = "") -
         return False
 
 
-def extract_memory(user_text: str, jarvis_text: str, api_key: str = "") -> dict:
+def extract_memory(user_text: str, slon_text: str = "", api_key: str = "", jarvis_text: str = "") -> dict:
     try:
         from or_client import client
 
-        combined = f"User: {user_text[:600]}\nJarvis: {jarvis_text[:300]}"
+        assistant_msg = slon_text or jarvis_text
+        combined = f"User: {user_text[:600]}\nAssistant: {assistant_msg[:300]}"
 
         raw = client.chat(
             f"Extract ALL memorable personal facts from this conversation. Any language.\n"
@@ -179,14 +181,14 @@ def extract_memory(user_text: str, jarvis_text: str, api_key: str = "") -> dict:
             f"                  favorite_game, favorite_sport, favorite_book, favorite_artist,\n"
             f"                  favorite_country, hobbies, interests, dislikes, etc.\n"
             f"  projects      → projects being built, ongoing work, goals, ideas in progress\n"
-            f"                  (e.g. mark_xxv: 'Building a JARVIS-like AI assistant')\n"
+            f"                  (e.g. mark_xxv: 'Building an AI assistant')\n"
             f"  relationships → people mentioned: friends, family, partner, colleagues\n"
             f"                  (e.g. best_friend_ali: 'Best friend, met in university')\n"
             f"  wishes        → future plans, things to buy, travel plans, dreams\n"
             f"  notes         → anything else worth remembering (habits, schedule, etc.)\n\n"
             f"IMPORTANT:\n"
             f"- Be LIBERAL: if something MIGHT be worth remembering, include it.\n"
-            f"- Extract from BOTH user and Jarvis turns.\n"
+            f"- Extract from BOTH user and assistant turns.\n"
             f"- Skip: weather, reminders, search results, one-time commands.\n"
             f"- Use concise English values regardless of conversation language.\n\n"
             f"Format:\n"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from dataclasses import replace
 
 import pytest
 
@@ -11,11 +12,13 @@ from providers.contracts import (
     ChatResponse,
     ModelInfo,
     ProviderStatus,
+    ToolDefinition,
 )
 from providers.errors import CapabilityError, ProviderAuthError, ProviderError
 from providers.registry import register
 
 from providers.router import NeverFallbackPolicy, Router
+from providers.routing import select_model
 from tests.unit.providers.mocks import MockChatProvider, mock_model
 
 USER_TEXT = "router ping"
@@ -96,12 +99,24 @@ def _request(
     role: str = "chat",
     text: bool = True,
     streaming: bool = True,
+    tool_calling: bool = False,
+    with_tools: bool = False,
 ) -> ChatRequest:
-    model = mock_model(provider_id, text=text, streaming=streaming)
+    base_model = mock_model(provider_id, text=text, streaming=streaming)
+    model = replace(base_model, tool_calling=tool_calling)
     return ChatRequest(
         model=model,
         messages=(ChatMessage(role="user", content=USER_TEXT),),
         role=role,
+        tools=(
+            ToolDefinition(
+                name="lookup",
+                description="Look up a value",
+                parameters={"type": "object", "properties": {}},
+            ),
+        )
+        if with_tools
+        else (),
     )
 
 
@@ -126,6 +141,41 @@ async def test_capability_failure_does_not_call_provider() -> None:
     assert provider.chat_calls == 0
     assert exc_info.value.role == "chat"
     assert exc_info.value.model_id == request.model.model_id
+
+
+async def test_text_only_chat_without_tools_reaches_provider() -> None:
+    provider = RecordingProvider("local")
+    router = Router(provider_id="local", providers={"local": provider})
+    await router.chat(_request("local", text=True, tool_calling=False))
+    assert provider.chat_calls == 1
+
+
+async def test_text_only_model_with_tools_fails_before_provider_call() -> None:
+    provider = RecordingProvider("local")
+    router = Router(provider_id="local", providers={"local": provider})
+    request = _request("local", text=True, tool_calling=False, with_tools=True)
+    with pytest.raises(CapabilityError, match="tool_calling"):
+        await router.chat(request)
+    assert provider.chat_calls == 0
+
+
+async def test_text_only_model_with_tools_fails_before_provider_stream() -> None:
+    provider = RecordingProvider("local")
+    router = Router(provider_id="local", providers={"local": provider})
+    request = _request("local", text=True, tool_calling=False, with_tools=True)
+    with pytest.raises(CapabilityError, match="tool_calling"):
+        async for _event in router.stream(request):
+            pytest.fail("capability failure must occur before streaming")
+    assert provider.stream_calls == 0
+
+
+async def test_tool_capable_model_with_tools_reaches_provider() -> None:
+    provider = RecordingProvider("local")
+    router = Router(provider_id="local", providers={"local": provider})
+    request = _request("local", text=True, tool_calling=True, with_tools=True)
+    await router.chat(request)
+    assert provider.chat_calls == 1
+    assert provider.requests == [request]
 
 
 async def test_default_policy_never_falls_back() -> None:
@@ -269,3 +319,152 @@ async def test_blank_key_is_treated_as_missing(clean_registry) -> None:
     with pytest.raises(ProviderAuthError):
         await router.chat(_request("gemini"))
     assert calls["n"] == 0
+
+
+def _candidate(
+    provider_id: str,
+    *,
+    model_id: str | None = None,
+    text: bool = True,
+    tool_calling: bool = False,
+) -> ModelInfo:
+    return ModelInfo(
+        provider_id=provider_id,
+        model_id=model_id or f"{provider_id}-model",
+        display_name=provider_id,
+        text=text,
+        tool_calling=tool_calling,
+        local=provider_id in {"local", "ollama", "llama_cpp"},
+    )
+
+
+def test_local_first_prefers_capable_available_local() -> None:
+    cloud = _candidate("openai", tool_calling=True)
+    incapable_local = _candidate("ollama")
+    capable_local = _candidate("llama_cpp", tool_calling=True)
+    selected = select_model(
+        (cloud, incapable_local, capable_local),
+        routing_mode="local_first",
+        configured_provider_id="openai",
+        required_capabilities={"tool_calling"},
+        availability={
+            ("openai", cloud.model_id): True,
+            ("ollama", incapable_local.model_id): True,
+            ("llama_cpp", capable_local.model_id): True,
+        },
+    )
+    assert selected is capable_local
+
+
+def test_manual_requires_exact_configured_model() -> None:
+    configured = _candidate("openai", model_id="configured")
+    selected = select_model(
+        (_candidate("openai", model_id="other"), configured),
+        routing_mode="manual",
+        configured_provider_id="openai",
+        configured_model_id="configured",
+    )
+    assert selected is configured
+
+
+def test_cloud_first_falls_back_to_permitted_local() -> None:
+    cloud = _candidate("gemini")
+    local = _candidate("ollama")
+    selected = select_model(
+        (cloud, local),
+        routing_mode="cloud_first",
+        configured_provider_id="gemini",
+        availability={"gemini": False, "ollama": True},
+    )
+    assert selected is local
+
+
+@pytest.mark.parametrize(
+    "constraint",
+    ({"network_mode": "offline"}, {"privacy_profile": "fully_local"}),
+)
+def test_offline_constraints_select_only_local(constraint: dict[str, str]) -> None:
+    cloud = _candidate("openrouter")
+    local = _candidate("local")
+    selected = select_model(
+        (cloud, local),
+        routing_mode="cloud_first",
+        configured_provider_id="openrouter",
+        **constraint,
+    )
+    assert selected is local
+
+
+@pytest.mark.parametrize("cloud_id", ["gemini", "openai", "openrouter"])
+async def test_local_only_never_falls_back_to_cloud(cloud_id: str) -> None:
+    local = FailingProvider("ollama")
+    cloud = RecordingProvider(cloud_id)
+    model = _candidate("ollama")
+    router = Router(
+        provider_id="ollama",
+        routing_mode="local_only",
+        models=(model, _candidate(cloud_id)),
+        providers={"ollama": local, cloud_id: cloud},
+        fallback_policy=ToProvider(cloud_id),
+    )
+    with pytest.raises(ProviderError, match="local boom"):
+        await router.chat(
+            ChatRequest(
+                model=model,
+                messages=(ChatMessage(role="user", content=USER_TEXT),),
+            )
+        )
+    assert local.chat_calls == 1
+    assert cloud.chat_calls == 0
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        (_candidate("ollama", text=False), {"ollama": True}),
+        (_candidate("ollama"), {"ollama": False}),
+    ],
+)
+def test_local_only_raises_capability_error_for_invalid_local(
+    failure: tuple[ModelInfo, dict[str, bool]],
+) -> None:
+    model, availability = failure
+    with pytest.raises(CapabilityError, match="available local model"):
+        select_model(
+            (model, _candidate("openai")),
+            routing_mode="local_only",
+            configured_provider_id="ollama",
+            availability=availability,
+        )
+
+
+@pytest.mark.parametrize(
+    ("routing_mode", "constraint"),
+    [
+        ("local_only", {}),
+        ("cloud_first", {"network_mode": "offline"}),
+        ("cloud_first", {"privacy_profile": "fully_local"}),
+    ],
+)
+@pytest.mark.parametrize("local_available", [False, True])
+async def test_restricted_routing_never_invokes_cloud_without_capable_local(
+    routing_mode: str,
+    constraint: dict[str, str],
+    local_available: bool,
+) -> None:
+    local_model = _candidate("ollama", text=False)
+    cloud_model = _candidate("openai")
+    local = RecordingProvider("ollama")
+    cloud = RecordingProvider("openai")
+    router = Router(
+        provider_id="openai",
+        routing_mode=routing_mode,
+        models=(local_model, cloud_model),
+        model_availability={"ollama": local_available, "openai": True},
+        providers={"ollama": local, "openai": cloud},
+        **constraint,
+    )
+    with pytest.raises(CapabilityError):
+        await router.chat(_request("openai"))
+    assert local.chat_calls == 0
+    assert cloud.chat_calls == 0

@@ -1,19 +1,20 @@
 import json
 import sys
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 from mark.safety import (
-    DecisionKind,
     SafetyDecision,
     SafetyPolicy,
     SafetyPolicyError,
     UnknownToolError,
     UntrustedSource,
-    authorize,
-    validate_args,
 )
+from mark.tools import ToolExecutor, ToolRegistry, ToolResult
+from mark.tools.builtin import build_builtin_registry
+from mark.tools.legacy.adapters import with_legacy_speak
 
 
 def get_base_dir() -> Path:
@@ -24,15 +25,6 @@ def get_base_dir() -> Path:
 
 BASE_DIR = get_base_dir()
 API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
-
-_CONFIRM_KINDS = frozenset(
-    {
-        DecisionKind.CONFIRM,
-        DecisionKind.EXACT_CONFIRM,
-        DecisionKind.BIOMETRIC,
-    }
-)
-
 
 class ToolDeniedError(SafetyPolicyError):
     """authorize returned deny, or required confirmation was not granted."""
@@ -57,7 +49,9 @@ def _get_api_key() -> str:
     return key
 
 
-def _inject_context(params: dict, tool: str, step_results: dict, goal: str = "") -> dict:
+def _inject_context(
+    params: dict, tool: str, step_results: dict, goal: str = ""
+) -> dict:
     if not step_results:
         return params
 
@@ -87,7 +81,8 @@ def _detect_language(text: str) -> str:
         model = genai.GenerativeModel("gemini-2.5-flash-lite")
         response = model.generate_content(
             f"What language is this text written in? "
-            f"Reply with ONLY the language name in English (e.g. Turkish, English, French).\n\n"
+            "Reply with ONLY the language name in English "
+            "(e.g. Turkish, English, French).\n\n"
             f"Text: {text[:200]}"
         )
         return response.text.strip()
@@ -126,114 +121,35 @@ def _translate_to_goal_language(content: str, goal: str) -> str:
         return content
 
 
-def _authorize_tool(
-    tool: str,
-    parameters: Mapping[str, object],
-    *,
-    policy: SafetyPolicy | None,
-    source: UntrustedSource | str,
-    intent: str,
-) -> SafetyDecision:
-    if policy is None:
-        return authorize(tool, parameters, source=source, intent=intent)
-    return policy.authorize(tool, parameters, source=source, intent=intent)
+def _registry_with_speak(
+    registry: ToolRegistry, speak: Callable | None
+) -> ToolRegistry:
+    if speak is None:
+        return registry
+    contextual = ToolRegistry()
+    for spec in registry.list():
+        contextual.register(
+            replace(spec, handler=with_legacy_speak(spec.handler, speak))
+        )
+    return contextual
 
 
-def _validate_tool_args(
-    tool: str,
-    parameters: object,
-    *,
-    policy: SafetyPolicy | None,
-) -> dict[str, object]:
-    if policy is None:
-        return validate_args(tool, parameters)
-    return policy.validate_args(tool, parameters)
-
-
-def _require_confirmation(
-    decision: SafetyDecision,
-    confirmer: Callable[[SafetyDecision], bool] | None,
-) -> None:
-    if decision.kind not in _CONFIRM_KINDS:
-        return
-    if confirmer is None or not confirmer(decision):
-        raise ToolDeniedError(decision.tool_name, "Confirmation is required.")
-
-
-def _dispatch_tool(tool: str, parameters: dict, speak: Callable | None) -> str:
-    if tool == "open_app":
-        from actions.open_app import open_app
-        return open_app(parameters=parameters, player=None) or "Done."
-
-    if tool == "web_search":
-        from actions.web_search import web_search
-        return web_search(parameters=parameters, player=None) or "Done."
-
-    if tool == "game_updater":
-        from actions.game_updater import game_updater
-        return game_updater(parameters=parameters, player=None, speak=speak) or "Done."
-
-    if tool == "browser_control":
-        from actions.browser_control import browser_control
-        return browser_control(parameters=parameters, player=None) or "Done."
-
-    if tool == "file_controller":
-        from actions.file_controller import file_controller
-        return file_controller(parameters=parameters, player=None) or "Done."
-
-    if tool == "cmd_control":
-        from actions.cmd_control import cmd_control
-        return cmd_control(parameters=parameters, player=None) or "Done."
-
-    if tool == "code_helper":
-        from actions.code_helper import code_helper
-        return code_helper(parameters=parameters, player=None, speak=speak) or "Done."
-
-    if tool == "dev_agent":
-        from actions.dev_agent import dev_agent
-        return dev_agent(parameters=parameters, player=None, speak=speak) or "Done."
-
-    if tool == "screen_process":
-        from actions.screen_processor import screen_process
-        screen_process(parameters=parameters, player=None)
-        return "Screen captured and analyzed."
-
-    if tool == "send_message":
-        from actions.send_message import send_message
-        return send_message(parameters=parameters, player=None) or "Done."
-
-    if tool == "reminder":
-        from actions.reminder import reminder
-        return reminder(parameters=parameters, player=None) or "Done."
-
-    if tool == "youtube_video":
-        from actions.youtube_video import youtube_video
-        return youtube_video(parameters=parameters, player=None) or "Done."
-
-    if tool == "weather_report":
-        from actions.weather_report import weather_action
-        return weather_action(parameters=parameters, player=None) or "Done."
-
-    if tool == "computer_settings":
-        from actions.computer_settings import computer_settings
-        return computer_settings(parameters=parameters, player=None) or "Done."
-
-    if tool == "desktop_control":
-        from actions.desktop import desktop_control
-        return desktop_control(parameters=parameters, player=None) or "Done."
-
-    if tool == "computer_control":
-        from actions.computer_control import computer_control
-        return computer_control(parameters=parameters, player=None) or "Done."
-
-    if tool == "generated_code":
-        raise ToolDeniedError(tool, "generated_code is not an execution path.")
-
-    if tool == "flight_finder":
-        from actions.flight_finder import flight_finder
-        return flight_finder(parameters=parameters, player=None, speak=speak) or "Done."
-
-    raise UnknownToolError(tool)
+def _legacy_result(tool: str, result: ToolResult) -> str:
+    """Translate the canonical result only at the legacy agent boundary."""
+    if not result.ok:
+        denied = result.code == "denied" or result.code.startswith("confirmation")
+        if tool == "generated_code" or denied:
+            raise ToolDeniedError(tool, result.message)
+        if result.code == "unknown_tool":
+            raise UnknownToolError(tool)
+        raise RuntimeError(result.message or f"Tool execution failed ({result.code}).")
+    if result.message:
+        return result.message
+    if result.data is None:
+        return "Done."
+    if isinstance(result.data, str):
+        return result.data
+    return str(result.data)
 
 
 def _call_tool(
@@ -245,19 +161,16 @@ def _call_tool(
     confirmer: Callable[[SafetyDecision], bool] | None = None,
     source: UntrustedSource | str = UntrustedSource.USER,
     intent: str = "",
+    registry: ToolRegistry | None = None,
+    tool_executor: ToolExecutor | None = None,
 ) -> str:
-    decision = _authorize_tool(
-        tool,
-        parameters,
-        policy=policy,
-        source=source,
-        intent=intent,
-    )
-    checked = _validate_tool_args(tool, parameters, policy=policy)
-    if decision.kind is DecisionKind.DENY:
-        raise ToolDeniedError(tool, decision.reason)
-    _require_confirmation(decision, confirmer)
-    return _dispatch_tool(tool, checked, speak)
+    canonical_registry = registry or build_builtin_registry()
+    executor = tool_executor
+    if executor is None:
+        execution_registry = _registry_with_speak(canonical_registry, speak)
+        executor = ToolExecutor(execution_registry, policy or SafetyPolicy(), confirmer)
+    result = executor.execute(tool, parameters, source=source, intent=intent)
+    return _legacy_result(tool, result)
 
 
 class AgentExecutor:
@@ -269,19 +182,35 @@ class AgentExecutor:
         policy: SafetyPolicy | None = None,
         confirmer: Callable[[SafetyDecision], bool] | None = None,
         source: UntrustedSource | str = UntrustedSource.USER,
+        registry: ToolRegistry | None = None,
+        tool_executor: ToolExecutor | None = None,
     ) -> None:
-        self._policy = policy
+        self.registry = registry or build_builtin_registry()
+        self._policy = policy or SafetyPolicy()
         self._confirmer = confirmer
         self._source = source
+        self.tool_executor = tool_executor or ToolExecutor(
+            self.registry, self._policy, confirmer
+        )
 
-    def _call_tool(self, tool: str, parameters: dict, speak: Callable | None) -> str:
+    def _call_tool(
+        self, tool: str, parameters: dict, speak: Callable | None, *, intent: str = ""
+    ) -> str:
+        executor = self.tool_executor
+        if speak is not None and executor.__class__ is ToolExecutor:
+            executor = ToolExecutor(
+                _registry_with_speak(self.registry, speak),
+                self._policy,
+                self._confirmer,
+            )
         return _call_tool(
             tool,
             parameters,
             speak,
-            policy=self._policy,
-            confirmer=self._confirmer,
             source=self._source,
+            intent=intent,
+            registry=self.registry,
+            tool_executor=executor,
         )
 
     def execute(
@@ -335,16 +264,21 @@ class AgentExecutor:
                     if cancel_flag and cancel_flag.is_set():
                         break
                     try:
-                        result = self._call_tool(tool, params, speak)
+                        result = self._call_tool(tool, params, speak, intent=goal)
                         step_results[step_num] = result
                         completed_steps.append(step)
-                        print(f"[Executor] ✅ Step {step_num} done: {str(result)[:100]}")
+                        print(
+                            f"[Executor] ✅ Step {step_num} done: {str(result)[:100]}"
+                        )
                         step_ok = True
                         break
 
                     except Exception as e:
                         error_msg = str(e)
-                        print(f"[Executor] ❌ Step {step_num} attempt {attempt} failed: {error_msg}")
+                        print(
+                            f"[Executor] ❌ Step {step_num} attempt {attempt} "
+                            f"failed: {error_msg}"
+                        )
 
                         recovery = analyze_error(step, error_msg, attempt=attempt)
                         decision = recovery["decision"]
@@ -375,13 +309,16 @@ class AgentExecutor:
                             fix_suggestion = recovery.get("fix_suggestion", "")
                             if fix_suggestion and tool != "generated_code":
                                 try:
-                                    fixed_step = generate_fix(step, error_msg, fix_suggestion)
+                                    fixed_step = generate_fix(
+                                        step, error_msg, fix_suggestion
+                                    )
                                     if speak:
                                         speak("Trying an alternative approach, sir.")
                                     res = self._call_tool(
                                         fixed_step["tool"],
                                         fixed_step["parameters"],
                                         speak,
+                                        intent=goal,
                                     )
                                     step_results[step_num] = res
                                     completed_steps.append(step)
@@ -418,14 +355,20 @@ class AgentExecutor:
             replan_attempts += 1
             plan = replan(goal, completed_steps, failed_step, failed_error)
 
-    def _summarize(self, goal: str, completed_steps: list, speak: Callable | None) -> str:
-        fallback = f"All done, sir. Completed {len(completed_steps)} steps for: {goal[:60]}."
+    def _summarize(
+        self, goal: str, completed_steps: list, speak: Callable | None
+    ) -> str:
+        fallback = (
+            f"All done, sir. Completed {len(completed_steps)} steps for: {goal[:60]}."
+        )
         try:
             import google.generativeai as genai
 
             genai.configure(api_key=_get_api_key())
             model = genai.GenerativeModel(model_name="gemini-2.5-flash-lite")
-            steps_str = "\n".join(f"- {s.get('description', '')}" for s in completed_steps)
+            steps_str = "\n".join(
+                f"- {s.get('description', '')}" for s in completed_steps
+            )
             prompt = (
                 f'User goal: "{goal}"\n'
                 f"Completed steps:\n{steps_str}\n\n"

@@ -37,7 +37,7 @@ class ArgSchema:
 
 
 @dataclass(frozen=True)
-class ToolSpec:
+class SafetyRule:
     """Conservative registry row. ``actions`` may lower or raise risk."""
 
     risk: RiskLevel
@@ -81,16 +81,16 @@ _REMINDER_TYPES = _types(
     time="str",
 )
 
-_REGISTRY: dict[str, ToolSpec] = {
-    "web_search": ToolSpec(
+_REGISTRY: dict[str, SafetyRule] = {
+    "web_search": SafetyRule(
         RiskLevel.READ,
         schema=ArgSchema(required=("query",), types=_types(query="str", mode="str")),
     ),
-    "weather_report": ToolSpec(
+    "weather_report": SafetyRule(
         RiskLevel.READ,
         schema=ArgSchema(required=("city",), types=_types(city="str")),
     ),
-    "flight_finder": ToolSpec(
+    "flight_finder": SafetyRule(
         RiskLevel.READ,
         schema=ArgSchema(
             required=("origin", "destination", "date"),
@@ -105,7 +105,7 @@ _REGISTRY: dict[str, ToolSpec] = {
             ),
         ),
     ),
-    "youtube_video": ToolSpec(
+    "youtube_video": SafetyRule(
         RiskLevel.NOTIFY,
         schema=ArgSchema(
             types=_types(
@@ -117,28 +117,28 @@ _REGISTRY: dict[str, ToolSpec] = {
             ),
         ),
     ),
-    "screen_process": ToolSpec(
+    "screen_process": SafetyRule(
         RiskLevel.NOTIFY,
         schema=ArgSchema(
             required=("text",),
             types=_types(angle="str", text="str"),
         ),
     ),
-    "save_memory": ToolSpec(
+    "save_memory": SafetyRule(
         RiskLevel.NOTIFY,
         schema=ArgSchema(types=_types(key="str", value="str")),
     ),
-    "file_processor": ToolSpec(
+    "file_processor": SafetyRule(
         RiskLevel.NOTIFY,
         schema=ArgSchema(
             types=_types(action="str", file_path="str", instruction="str"),
         ),
     ),
-    "open_app": ToolSpec(
+    "open_app": SafetyRule(
         RiskLevel.CONFIRM,
         schema=ArgSchema(required=("app_name",), types=_types(app_name="str")),
     ),
-    "send_message": ToolSpec(
+    "send_message": SafetyRule(
         RiskLevel.CONFIRM,
         schema=ArgSchema(
             required=("receiver", "message_text", "platform"),
@@ -149,7 +149,7 @@ _REGISTRY: dict[str, ToolSpec] = {
             ),
         ),
     ),
-    "browser_control": ToolSpec(
+    "browser_control": SafetyRule(
         RiskLevel.CONFIRM,
         schema=ArgSchema(
             required=("action",),
@@ -166,7 +166,7 @@ _REGISTRY: dict[str, ToolSpec] = {
             ),
         ),
     ),
-    "file_controller": ToolSpec(
+    "file_controller": SafetyRule(
         RiskLevel.CONFIRM,
         schema=ArgSchema(required=("action",), types=_FILE_TYPES),
         actions=(
@@ -186,7 +186,7 @@ _REGISTRY: dict[str, ToolSpec] = {
             ("rename", RiskLevel.EXACT_CONFIRM),
         ),
     ),
-    "desktop_control": ToolSpec(
+    "desktop_control": SafetyRule(
         RiskLevel.CONFIRM,
         schema=ArgSchema(types=_DESKTOP_TYPES),
         actions=(
@@ -205,7 +205,7 @@ _REGISTRY: dict[str, ToolSpec] = {
             ("file.copy", RiskLevel.CONFIRM),
         ),
     ),
-    "reminder": ToolSpec(
+    "reminder": SafetyRule(
         RiskLevel.CONFIRM,
         schema=ArgSchema(types=_REMINDER_TYPES),
         actions=(
@@ -215,14 +215,14 @@ _REGISTRY: dict[str, ToolSpec] = {
             ("cancel", RiskLevel.CONFIRM),
         ),
     ),
-    "computer_control": ToolSpec(
+    "computer_control": SafetyRule(
         RiskLevel.CONFIRM,
         schema=ArgSchema(
             required=("action",),
             types=_types(action="str", path="str", text="str"),
         ),
     ),
-    "computer_settings": ToolSpec(
+    "computer_settings": SafetyRule(
         RiskLevel.CONFIRM,
         schema=ArgSchema(
             types=_types(action="str", description="str", value="str"),
@@ -232,11 +232,11 @@ _REGISTRY: dict[str, ToolSpec] = {
             ("restart", RiskLevel.BIOMETRIC),
         ),
     ),
-    "agent_task": ToolSpec(
+    "agent_task": SafetyRule(
         RiskLevel.CONFIRM,
         schema=ArgSchema(required=("goal",), types=_types(goal="str", priority="str")),
     ),
-    "game_updater": ToolSpec(
+    "game_updater": SafetyRule(
         RiskLevel.EXACT_CONFIRM,
         schema=ArgSchema(
             types=_types(
@@ -257,11 +257,11 @@ _REGISTRY: dict[str, ToolSpec] = {
             ("update", RiskLevel.EXACT_CONFIRM),
         ),
     ),
-    "cmd_control": ToolSpec(
+    "cmd_control": SafetyRule(
         RiskLevel.EXACT_CONFIRM,
         schema=ArgSchema(types=_types(command="str", cwd="str")),
     ),
-    "code_helper": ToolSpec(
+    "code_helper": SafetyRule(
         RiskLevel.EXACT_CONFIRM,
         schema=ArgSchema(
             required=("action",),
@@ -277,7 +277,7 @@ _REGISTRY: dict[str, ToolSpec] = {
             ),
         ),
     ),
-    "dev_agent": ToolSpec(
+    "dev_agent": SafetyRule(
         RiskLevel.EXACT_CONFIRM,
         schema=ArgSchema(
             required=("description",),
@@ -289,8 +289,9 @@ _REGISTRY: dict[str, ToolSpec] = {
             ),
         ),
     ),
-    "shutdown_jarvis": ToolSpec(RiskLevel.BIOMETRIC),
-    "generated_code": ToolSpec(
+    "shutdown_slon": SafetyRule(RiskLevel.BIOMETRIC),
+    "shutdown_jarvis": SafetyRule(RiskLevel.BIOMETRIC),
+    "generated_code": SafetyRule(
         RiskLevel.BIOMETRIC,
         deny=True,
         schema=ArgSchema(
@@ -306,7 +307,7 @@ def registered_tools() -> frozenset[str]:
     return frozenset(_REGISTRY)
 
 
-def tool_spec(tool_name: str) -> ToolSpec:
+def tool_spec(tool_name: str) -> SafetyRule:
     """Return the registry row or raise ``UnknownToolError``."""
     spec = _REGISTRY.get(tool_name)
     if spec is None:
@@ -387,7 +388,7 @@ def validate_args(tool_name: str, args: object) -> dict[str, object]:
 __all__ = [
     "OVERRIDE_KEYS",
     "ArgSchema",
-    "ToolSpec",
+    "SafetyRule",
     "action_name",
     "effective_risk",
     "registered_tools",
