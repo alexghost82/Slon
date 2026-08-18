@@ -4,7 +4,10 @@ import threading
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
+from agent.runtime import AgentLoop, AgentLoopResult, LoopBudget
+from agent.steering import SteeringQueue
 from mark.safety import (
     SafetyDecision,
     SafetyPolicy,
@@ -384,3 +387,30 @@ class AgentExecutor:
             if speak:
                 speak(fallback)
             return fallback
+
+
+async def execute_agent_loop(
+    user_goal: str,
+    provider: Any = None,
+    tool_executor: Any = None,
+    budget: LoopBudget | None = None,
+    steering_queue: SteeringQueue | None = None,
+) -> AgentLoopResult:
+    """Execute iterative multi-turn AgentLoop engine."""
+    loop = AgentLoop(
+        provider=provider,
+        tool_executor=tool_executor,
+        budget=budget,
+    )
+    return await loop.run(user_goal=user_goal, steering_queue=steering_queue)
+
+
+def execute_plan(
+    goal: str,
+    speak: Callable | None = None,
+    cancel_flag: threading.Event | None = None,
+) -> str:
+    """Legacy plan-step execution helper function using AgentExecutor."""
+    executor = AgentExecutor()
+    return executor.execute(goal, speak=speak, cancel_flag=cancel_flag)
+
