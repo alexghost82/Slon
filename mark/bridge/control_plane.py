@@ -120,7 +120,7 @@ class DesktopControlPlane:
         with self._lock:
             self._log.append(entry)
             del self._log[:-500]
-            if message.lower().startswith("jarvis:"):
+            if message.lower().startswith("slon:") or message.lower().startswith("jarvis:"):
                 self._latest_reply = message.split(":", 1)[1].strip()
                 self._reply_sequence += 1
                 self._reply_condition.notify_all()
