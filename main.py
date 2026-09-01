@@ -1,42 +1,28 @@
 import asyncio
 import threading
-import json
+import queue
+import uuid
+import logging
 import sys
-import traceback
+import time
 from pathlib import Path
 
-import sounddevice as sd
 from google import genai
 from google.genai import types
+from providers.contracts import ModelInfo
 from ui import SlonUI, JarvisUI
 from memory.memory_manager import (
     load_memory, update_memory, format_memory_for_prompt,
     should_extract_memory, extract_memory
 )
-
-from actions.file_processor import file_processor
-from actions.flight_finder     import flight_finder
-from actions.open_app          import open_app
-from actions.weather_report    import weather_action
-from actions.send_message      import send_message
-from actions.reminder          import reminder
-from actions.computer_settings import computer_settings
-from actions.screen_processor  import screen_process
-from actions.youtube_video     import youtube_video
-from actions.desktop           import desktop_control
-from actions.browser_control   import browser_control
-from actions.file_controller   import file_controller
-from actions.code_helper       import code_helper
-from actions.dev_agent         import dev_agent
-from actions.web_search        import web_search as web_search_action
-from actions.computer_control  import computer_control
-from actions.game_updater      import game_updater
+from config.settings import load_settings
+from config.schema import Settings
+from i18n import t
 
 # New-stack bridge (Wave 13); optional — never break legacy Gemini Live.
 try:
-    from mark.bridge import authorize_tool, build_runtime_stack
+    from acta.bridge import build_runtime_stack
 except Exception:  # pragma: no cover
-    authorize_tool = None  # type: ignore[assignment]
     build_runtime_stack = None  # type: ignore[assignment]
 
 
@@ -47,29 +33,72 @@ def get_base_dir():
 
 
 BASE_DIR        = get_base_dir()
-API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 PROMPT_PATH     = BASE_DIR / "core" / "prompt.txt"
-LIVE_MODEL          = "models/gemini-2.5-flash-native-audio-preview-12-2025"
-CHANNELS            = 1
-SEND_SAMPLE_RATE    = 16000
-RECEIVE_SAMPLE_RATE = 24000
-CHUNK_SIZE          = 1024
+LIVE_MODEL_INFO = ModelInfo(
+    provider_id="gemini",
+    model_id="models/gemini-2.5-flash-native-audio-preview-12-2025",
+    display_name="Gemini 2.5 Flash Native Audio Preview",
+    text=True,
+    streaming=True,
+    tool_calling=True,
+    audio_input=True,
+    audio_output=True,
+    source="Google",
+    license="Proprietary",
+)
+LIVE_MODEL = LIVE_MODEL_INFO.model_id  # compatibility alias
 
 
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    from config.secrets import get_secret
+
+    key = get_secret("gemini_api_key")
+    if key is None:
+        raise RuntimeError(t("error.gemini_key_missing"))
+    return key
 
 
 def _key_provider(name: str) -> str | None:
     """Injected secret reader for the runtime bridge (no values logged)."""
+    from config.secrets import get_provider_secret
+
+    return get_provider_secret(name)
+
+
+def _get_settings() -> Settings:
+    """Return settings with fallback to defaults. Never raises."""
     try:
-        with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        value = data.get(name)
-        return value if isinstance(value, str) and value.strip() else None
-    except Exception:
+        return load_settings()
+    except Exception:  # pragma: no cover
+        from config.schema import default_settings
+        return default_settings()
+
+
+def _resolve_model_info(provider_id: str, model_id: str = "") -> ModelInfo:
+    """Build a ModelInfo from settings (or fall back to Gemini Live default)."""
+    settings = _get_settings()
+    selected_provider = getattr(settings, "provider_id", provider_id)
+    selected_model_id = model_id or getattr(settings, "model_id", "")
+    if selected_model_id:
+        return ModelInfo(
+            provider_id=selected_provider,
+            model_id=selected_model_id,
+            display_name=selected_model_id,
+            text=True,
+            streaming=True,
+            tool_calling=True,
+            source=selected_provider,
+        )
+    # Default: Gemini Live audio model for legacy compatibility.
+    return LIVE_MODEL_INFO
+
+
+def _get_api_key_for(provider_id: str) -> str | None:
+    """Read the API key for a given provider, or None for local providers."""
+    if provider_id == "local" or provider_id == "ollama" or provider_id == "llama_cpp":
         return None
+    from config.secrets import get_secret
+    return get_secret(f"{provider_id}_api_key")
 
 
 def _build_stack():
@@ -78,12 +107,12 @@ def _build_stack():
     try:
         return build_runtime_stack(
             repo_root=BASE_DIR,
-            provider_id="gemini",
-            network_mode="hybrid",
+            provider_id=_get_settings().provider_id,
+            network_mode=_get_settings().network_mode or "hybrid",
             key_provider=_key_provider,
         )
     except Exception as exc:
-        print(f"[Bridge] unavailable: {exc}")
+        logger.error("[Bridge] %s", t("bridge.unavailable", exc=type(exc).__name__))
         return None
 
 
@@ -115,335 +144,34 @@ def _update_memory_async(user_text: str, slon_text: str = "", jarvis_text: str =
         data = extract_memory(user_text, assistant_text, api_key)
         if data:
             update_memory(data)
-            print(f"[Memory] ✅ {list(data.keys())}")
-    except Exception as e:
-        if "429" not in str(e):
-            print(f"[Memory] ⚠️ {e}")
+            logger.info("[Memory] %s", t("bridge.memory_loaded", keys=list(data.keys())))
+    except Exception as exc:
+        if "429" not in str(exc):
+            logger.warning("[Memory] %s", t("bridge.memory_error", exc=type(exc).__name__))
 
-TOOL_DECLARATIONS = [
-    {
-        "name": "open_app",
-        "description": (
-            "Opens any application on the Windows computer. "
-            "Use this whenever the user asks to open, launch, or start any app, "
-            "website, or program. Always call this tool — never just say you opened it."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "app_name": {
-                    "type": "STRING",
-                    "description": "Exact name of the application (e.g. 'WhatsApp', 'Chrome', 'Spotify')"
-                }
-            },
-            "required": ["app_name"]
-        }
-    },
-    {
-        "name": "web_search",
-        "description": "Searches the web for any information.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "query":  {"type": "STRING", "description": "Search query"},
-                "mode":   {"type": "STRING", "description": "search (default) or compare"},
-                "items":  {"type": "ARRAY", "items": {"type": "STRING"}, "description": "Items to compare"},
-                "aspect": {"type": "STRING", "description": "price | specs | reviews"}
-            },
-            "required": ["query"]
-        }
-    },
-    {
-        "name": "weather_report",
-        "description": "Gives the weather report to user",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "city": {"type": "STRING", "description": "City name"}
-            },
-            "required": ["city"]
-        }
-    },
-    {
-        "name": "send_message",
-        "description": "Sends a text message via WhatsApp, Telegram, or other messaging platform.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "receiver":     {"type": "STRING", "description": "Recipient contact name"},
-                "message_text": {"type": "STRING", "description": "The message to send"},
-                "platform":     {"type": "STRING", "description": "Platform: WhatsApp, Telegram, etc."}
-            },
-            "required": ["receiver", "message_text", "platform"]
-        }
-    },
-    {
-        "name": "reminder",
-        "description": "Sets a timed reminder using Windows Task Scheduler.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "date":    {"type": "STRING", "description": "Date in YYYY-MM-DD format"},
-                "time":    {"type": "STRING", "description": "Time in HH:MM format (24h)"},
-                "message": {"type": "STRING", "description": "Reminder message text"}
-            },
-            "required": ["date", "time", "message"]
-        }
-    },
-    {
-        "name": "youtube_video",
-        "description": (
-            "Controls YouTube. Use for: playing videos, summarizing a video's content, "
-            "getting video info, or showing trending videos."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "action": {"type": "STRING", "description": "play | summarize | get_info | trending (default: play)"},
-                "query":  {"type": "STRING", "description": "Search query for play action"},
-                "save":   {"type": "BOOLEAN", "description": "Save summary to Notepad (summarize only)"},
-                "region": {"type": "STRING", "description": "Country code for trending e.g. TR, US"},
-                "url":    {"type": "STRING", "description": "Video URL for get_info action"},
-            },
-            "required": []
-        }
-    },
-    {
-        "name": "screen_process",
-        "description": (
-            "Captures and analyzes the screen or webcam image. "
-            "MUST be called when user asks what is on screen, what you see, "
-            "analyze my screen, look at camera, etc. "
-            "You have NO visual ability without this tool. "
-            "After calling this tool, stay SILENT — the vision module speaks directly."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "angle": {"type": "STRING", "description": "'screen' to capture display, 'camera' for webcam. Default: 'screen'"},
-                "text":  {"type": "STRING", "description": "The question or instruction about the captured image"}
-            },
-            "required": ["text"]
-        }
-    },
-    {
-        "name": "computer_settings",
-        "description": (
-            "Controls the computer: volume, brightness, window management, keyboard shortcuts, "
-            "typing text on screen, closing apps, fullscreen, dark mode, WiFi, restart, shutdown, "
-            "scrolling, tab management, zoom, screenshots, lock screen, refresh/reload page. "
-            "Use for ANY single computer control command. NEVER route to agent_task."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "action":      {"type": "STRING", "description": "The action to perform"},
-                "description": {"type": "STRING", "description": "Natural language description of what to do"},
-                "value":       {"type": "STRING", "description": "Optional value: volume level, text to type, etc."}
-            },
-            "required": []
-        }
-    },
-    {
-        "name": "browser_control",
-        "description": (
-            "Controls the web browser. Use for: opening websites, searching the web, "
-            "clicking elements, filling forms, scrolling, any web-based task."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "action":      {"type": "STRING", "description": "go_to | search | click | type | scroll | fill_form | smart_click | smart_type | get_text | press | close"},
-                "url":         {"type": "STRING", "description": "URL for go_to action"},
-                "query":       {"type": "STRING", "description": "Search query for search action"},
-                "selector":    {"type": "STRING", "description": "CSS selector for click/type"},
-                "text":        {"type": "STRING", "description": "Text to click or type"},
-                "description": {"type": "STRING", "description": "Element description for smart_click/smart_type"},
-                "direction":   {"type": "STRING", "description": "up or down for scroll"},
-                "key":         {"type": "STRING", "description": "Key name for press action"},
-                "incognito":   {"type": "BOOLEAN", "description": "Open in private/incognito mode"},
-            },
-            "required": ["action"]
-        }
-    },
-    {
-        "name": "file_controller",
-        "description": "Manages files and folders: list, create, delete, move, copy, rename, read, write, find, disk usage.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "action":      {"type": "STRING", "description": "list | create_file | create_folder | delete | move | copy | rename | read | write | find | largest | disk_usage | organize_desktop | info"},
-                "path":        {"type": "STRING", "description": "File/folder path or shortcut: desktop, downloads, documents, home"},
-                "destination": {"type": "STRING", "description": "Destination path for move/copy"},
-                "new_name":    {"type": "STRING", "description": "New name for rename"},
-                "content":     {"type": "STRING", "description": "Content for create_file/write"},
-                "name":        {"type": "STRING", "description": "File name to search for"},
-                "extension":   {"type": "STRING", "description": "File extension to search (e.g. .pdf)"},
-                "count":       {"type": "INTEGER", "description": "Number of results for largest"},
-            },
-            "required": ["action"]
-        }
-    },
-    {
-        "name": "desktop_control",
-        "description": "Controls the desktop: wallpaper, organize, clean, list, stats.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "action": {"type": "STRING", "description": "wallpaper | wallpaper_url | organize | clean | list | stats | task"},
-                "path":   {"type": "STRING", "description": "Image path for wallpaper"},
-                "url":    {"type": "STRING", "description": "Image URL for wallpaper_url"},
-                "mode":   {"type": "STRING", "description": "by_type or by_date for organize"},
-                "task":   {"type": "STRING", "description": "Natural language desktop task"},
-            },
-            "required": ["action"]
-        }
-    },
-    {
-        "name": "code_helper",
-        "description": "Writes, edits, explains, runs, or builds code files.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "action":      {"type": "STRING", "description": "write | edit | explain | run | build | auto (default: auto)"},
-                "description": {"type": "STRING", "description": "What the code should do or what change to make"},
-                "language":    {"type": "STRING", "description": "Programming language (default: python)"},
-                "output_path": {"type": "STRING", "description": "Where to save the file"},
-                "file_path":   {"type": "STRING", "description": "Path to existing file for edit/explain/run/build"},
-                "code":        {"type": "STRING", "description": "Raw code string for explain"},
-                "args":        {"type": "STRING", "description": "CLI arguments for run/build"},
-                "timeout":     {"type": "INTEGER", "description": "Execution timeout in seconds (default: 30)"},
-            },
-            "required": ["action"]
-        }
-    },
-    {
-        "name": "dev_agent",
-        "description": "Builds complete multi-file projects from scratch: plans, writes files, installs deps, opens VSCode, runs and fixes errors.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "description":  {"type": "STRING", "description": "What the project should do"},
-                "language":     {"type": "STRING", "description": "Programming language (default: python)"},
-                "project_name": {"type": "STRING", "description": "Optional project folder name"},
-                "timeout":      {"type": "INTEGER", "description": "Run timeout in seconds (default: 30)"},
-            },
-            "required": ["description"]
-        }
-    },
-    {
-        "name": "agent_task",
-        "description": (
-            "Executes complex multi-step tasks requiring multiple different tools. "
-            "Examples: 'research X and save to file', 'find and organize files'. "
-            "DO NOT use for single commands. NEVER use for Steam/Epic — use game_updater."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "goal":     {"type": "STRING", "description": "Complete description of what to accomplish"},
-                "priority": {"type": "STRING", "description": "low | normal | high (default: normal)"}
-            },
-            "required": ["goal"]
-        }
-    },
-    {
-        "name": "computer_control",
-        "description": "Direct computer control: type, click, hotkeys, scroll, move mouse, screenshots, find elements on screen.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "action":      {"type": "STRING", "description": "type | smart_type | click | double_click | right_click | hotkey | press | scroll | move | copy | paste | screenshot | wait | clear_field | focus_window | screen_find | screen_click | random_data | user_data"},
-                "text":        {"type": "STRING", "description": "Text to type or paste"},
-                "x":           {"type": "INTEGER", "description": "X coordinate"},
-                "y":           {"type": "INTEGER", "description": "Y coordinate"},
-                "keys":        {"type": "STRING", "description": "Key combination e.g. 'ctrl+c'"},
-                "key":         {"type": "STRING", "description": "Single key e.g. 'enter'"},
-                "direction":   {"type": "STRING", "description": "up | down | left | right"},
-                "amount":      {"type": "INTEGER", "description": "Scroll amount (default: 3)"},
-                "seconds":     {"type": "NUMBER",  "description": "Seconds to wait"},
-                "title":       {"type": "STRING",  "description": "Window title for focus_window"},
-                "description": {"type": "STRING",  "description": "Element description for screen_find/screen_click"},
-                "type":        {"type": "STRING",  "description": "Data type for random_data"},
-                "field":       {"type": "STRING",  "description": "Field for user_data: name|email|city"},
-                "clear_first": {"type": "BOOLEAN", "description": "Clear field before typing (default: true)"},
-                "path":        {"type": "STRING",  "description": "Save path for screenshot"},
-            },
-            "required": ["action"]
-        }
-    },
-    {
-        "name": "game_updater",
-        "description": (
-            "THE ONLY tool for ANY Steam or Epic Games request. "
-            "Use for: installing, downloading, updating games, listing installed games, "
-            "checking download status, scheduling updates. "
-            "ALWAYS call directly for any Steam/Epic/game request. "
-            "NEVER use agent_task, browser_control, or web_search for Steam/Epic."
-        ),
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "action":    {"type": "STRING",  "description": "update | install | list | download_status | schedule | cancel_schedule | schedule_status (default: update)"},
-                "platform":  {"type": "STRING",  "description": "steam | epic | both (default: both)"},
-                "game_name": {"type": "STRING",  "description": "Game name (partial match supported)"},
-                "app_id":    {"type": "STRING",  "description": "Steam AppID for install (optional)"},
-                "hour":      {"type": "INTEGER", "description": "Hour for scheduled update 0-23 (default: 3)"},
-                "minute":    {"type": "INTEGER", "description": "Minute for scheduled update 0-59 (default: 0)"},
-                "shutdown_when_done": {"type": "BOOLEAN", "description": "Shut down PC when download finishes"},
-            },
-            "required": []
-        }
-    },
-    {
-        "name": "flight_finder",
-        "description": "Searches Google Flights and speaks the best options.",
-        "parameters": {
-            "type": "OBJECT",
-            "properties": {
-                "origin":      {"type": "STRING",  "description": "Departure city or airport code"},
-                "destination": {"type": "STRING",  "description": "Arrival city or airport code"},
-                "date":        {"type": "STRING",  "description": "Departure date (any format)"},
-                "return_date": {"type": "STRING",  "description": "Return date for round trips"},
-                "passengers":  {"type": "INTEGER", "description": "Number of passengers (default: 1)"},
-                "cabin":       {"type": "STRING",  "description": "economy | premium | business | first"},
-                "save":        {"type": "BOOLEAN", "description": "Save results to Notepad"},
-            },
-            "required": ["origin", "destination", "date"]
-        }
-    },
-    {
-    "name": "file_processor",
-    "description": (
-        "Processes any file that the user has uploaded or dropped onto the interface. "
-        "Use this when the user refers to an uploaded file and wants an action on it. "
-        "Supports: images (describe/ocr/resize/compress/convert), "
-        "PDFs (summarize/extract_text/to_word), "
-        "Word docs & text files (summarize/fix/reformat/translate), "
-        "CSV/Excel (analyze/stats/filter/sort/convert), "
-        "JSON/XML (validate/format/analyze), "
-        "code files (explain/review/fix/optimize/run/document/test), "
-        "audio (transcribe/trim/convert/info), "
-        "video (trim/extract_audio/extract_frame/compress/transcribe/info), "
-        "archives (list/extract), "
-        "presentations (summarize/extract_text). "
-        "ALWAYS call this tool when a file has been uploaded and the user gives a command about it. "
-        "If the user's command is ambiguous, pick the most logical action for that file type."
-    ),
-    "parameters": {
-        "type": "OBJECT",
-        "properties": {
-            "file_path": {
-                "type": "STRING",
-from mark.tools.builtin import build_builtin_registry
-from mark.tools.exporters.gemini import export_gemini_tools
+from acta.tools.exporters.gemini import export_gemini_tools
+from agent.latency import TurnLatencyTracker
+from runtime.audio import AudioPipeline
+from runtime.lifecycle import run_live_lifecycle
+from runtime.live_session import receive_live_session
+from runtime.tool_bridge import LiveToolBridge, build_live_registry
+from runtime.events import RuntimeEventBus, RuntimeEventKind, UIRuntimeEventSink
+from sessions import ModelPolicy, TranscriptKind
 
-TOOL_DECLARATIONS = export_gemini_tools(build_builtin_registry().list())
+
+logger = logging.getLogger(__name__)
 
 
 class SlonLive:
 
-    def __init__(self, ui: SlonUI, runtime_stack=None):
+    def __init__(
+        self,
+        ui: SlonUI,
+        runtime_stack=None,
+        selected_model: ModelInfo = LIVE_MODEL_INFO,
+        session_id: str | None = None,
+        workspace_id: str = "desktop",
+    ):
         self.ui             = ui
         self.session        = None
         self.audio_in_queue = None
@@ -452,21 +180,105 @@ class SlonLive:
         self._is_speaking   = False
         self._speaking_lock = threading.Lock()
         self.runtime_stack  = runtime_stack
+        if selected_model.provider_id != "gemini" or not (
+            selected_model.audio_input and selected_model.audio_output
+        ):
+            raise ValueError(t("error.model_info_missing"))
+        self.selected_model = selected_model
+        self.workspace_id = workspace_id
+        session_manager = getattr(runtime_stack, "session_manager", None)
+        if session_manager is not None:
+            if session_id is None:
+                logical_session = session_manager.create(
+                    title="Live conversation",
+                    agent_id="slon",
+                    model_policy=ModelPolicy(
+                        selected_model.provider_id, selected_model.model_id
+                    ),
+                    workspace_id=workspace_id,
+                )
+                session_id = logical_session.id
+            else:
+                logical_session = session_manager.get(
+                    session_id, workspace_id=workspace_id
+                )
+                if (
+                    logical_session.model_policy.provider_id,
+                    logical_session.model_policy.model_id,
+                ) != (selected_model.provider_id, selected_model.model_id):
+                    raise ValueError("selected model does not match session model policy")
+                logical_session = session_manager.resume(
+                    session_id, workspace_id=workspace_id
+                )
+        self.session_id = session_id or str(uuid.uuid4())
+        self.connection_generation = 0
+        self._active_turn_id: str | None = None
+        self._active_session_run = None
+        self._active_user_persisted = False
+        self._closed = False
+        base_registry = getattr(runtime_stack, "tool_registry", None)
+        policy = getattr(runtime_stack, "safety", None)
+        live_registry = build_live_registry(
+            ui=ui,
+            speak=self.speak,
+            base_registry=base_registry,
+        )
+        self.tool_bridge = LiveToolBridge(
+            ui=ui,
+            speak=self.speak,
+            registry=live_registry,
+            policy=policy,
+        )
+        self.tool_registry = self.tool_bridge.registry
+        self.tool_executor = self.tool_bridge.executor
+        self.tool_declarations = export_gemini_tools(self.tool_registry.list())
+        self.latency_trace = TurnLatencyTracker()
+        self.runtime_events = RuntimeEventBus()
+        self.runtime_events.subscribe(UIRuntimeEventSink(ui))
+        self.audio = AudioPipeline(
+            ui=ui,
+            set_speaking=self.set_speaking,
+            latency_trace=self.latency_trace,
+            speaking_lock=self._speaking_lock,
+            is_speaking=lambda: self._is_speaking,
+        )
         self.ui.on_text_command = self._on_text_command
         control_plane = getattr(self.ui, "control_plane", None)
         if control_plane is not None:
             control_plane.bind_text_handler(self._on_text_command)
-            control_plane.update_state(model_id=LIVE_MODEL)
+            control_plane.update_state(model_id=self.selected_model.model_id)
         if runtime_stack is not None:
             for line in runtime_stack.summary_lines():
                 try:
                     self.ui.write_log(f"SYS: bridge {line}")
                 except Exception:
-                    print(f"[Bridge] {line}")
+                    logger.info("[Bridge] %s", line)
 
     def _on_text_command(self, text: str):
-        if not self._loop or not self.session:
+        if self._closed or not self._loop or not self.session:
             return
+        self.latency_trace.start_turn()
+        self._active_turn_id = str(uuid.uuid4())
+        manager = getattr(self.runtime_stack, "session_manager", None)
+        if manager is not None:
+            self._active_session_run = manager.start_run(
+                self.session_id,
+                workspace_id=self.workspace_id,
+                effective_provider_id=self.selected_model.provider_id,
+                effective_model_id=self.selected_model.model_id,
+                turn_id=self._active_turn_id,
+            )
+            manager.append_event(
+                self.session_id,
+                workspace_id=self.workspace_id,
+                turn_id=self._active_turn_id,
+                kind=TranscriptKind.TEXT,
+                role="user",
+                text=text,
+            )
+            self._active_user_persisted = True
+        self.latency_trace.mark("user_speech_end")
+        self.latency_trace.mark("provider_request_start")
         asyncio.run_coroutine_threadsafe(
             self.session.send_client_content(
                 turns={"parts": [{"text": text}]},
@@ -479,12 +291,18 @@ class SlonLive:
         with self._speaking_lock:
             self._is_speaking = value
         if value:
-            self.ui.set_state("SPEAKING")
+            self._emit_event(RuntimeEventKind.SPEAKING)
         elif not self.ui.muted:
-            self.ui.set_state("LISTENING")
+            self._emit_event(RuntimeEventKind.LISTENING)
+
+    def _emit_event(self, kind: RuntimeEventKind, **metadata):
+        metadata.setdefault("session_id", self.session_id)
+        metadata.setdefault("turn_id", self._active_turn_id)
+        metadata.setdefault("connection_generation", self.connection_generation)
+        return self.runtime_events.emit(kind, **metadata)
 
     def speak(self, text: str):
-        if not self._loop or not self.session:
+        if self._closed or not self._loop or not self.session:
             return
         asyncio.run_coroutine_threadsafe(
             self.session.send_client_content(
@@ -493,11 +311,6 @@ class SlonLive:
             ),
             self._loop
         )
-
-    def speak_error(self, tool_name: str, error: str):
-        short = str(error)[:120]
-        self.ui.write_log(f"ERR: {tool_name} — {short}")
-        self.speak(f"Sir, {tool_name} encountered an error. {short}")
 
     def _build_config(self) -> types.LiveConnectConfig:
         from datetime import datetime
@@ -523,8 +336,11 @@ class SlonLive:
             response_modalities=["AUDIO"],
             output_audio_transcription={},
             input_audio_transcription={},
+            realtime_input_config=types.RealtimeInputConfig(
+                activity_handling=types.ActivityHandling.START_OF_ACTIVITY_INTERRUPTS
+            ),
             system_instruction="\n".join(parts),
-            tools=[{"function_declarations": TOOL_DECLARATIONS}],
+            tools=[{"function_declarations": self.tool_declarations}],
             session_resumption=types.SessionResumptionConfig(),
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
@@ -535,346 +351,531 @@ class SlonLive:
             ),
         )
 
-    async def _execute_tool(self, fc) -> types.FunctionResponse:
+    async def _persist_tool_call(self, fc) -> None:
+        manager = getattr(self.runtime_stack, "session_manager", None)
+        if manager is None or self._active_turn_id is None:
+            return
+        await asyncio.to_thread(
+            manager.append_event,
+            self.session_id,
+            workspace_id=self.workspace_id,
+            turn_id=self._active_turn_id,
+            kind=TranscriptKind.TOOL_CALL,
+            role="assistant",
+            tool_call_id=fc.id,
+            tool_name=fc.name,
+            data=dict(fc.args or {}),
+        )
+
+    async def _persist_tool_result(self, fc, result, value) -> None:
+        manager = getattr(self.runtime_stack, "session_manager", None)
+        if manager is None or self._active_turn_id is None:
+            return
+        artifact_metadata = tuple(
+            {
+                "kind": item.kind,
+                "path": item.path,
+                "uri": item.uri,
+                "mime_type": item.mime_type,
+            }
+            for item in result.artifacts
+        )
+        await asyncio.to_thread(
+            manager.append_event,
+            self.session_id,
+            workspace_id=self.workspace_id,
+            turn_id=self._active_turn_id,
+            kind=TranscriptKind.TOOL_RESULT,
+            role="tool",
+            tool_call_id=fc.id,
+            tool_name=fc.name,
+            data={
+                "result": value if result.ok else None,
+                "error": None if result.ok else result.message or result.code,
+            },
+            artifacts=artifact_metadata,
+        )
+
+    async def _execute_tool(
+        self, fc, *, persist: bool = True, result_sink: dict | None = None
+    ) -> types.FunctionResponse:
+        await self._start_live_turn()
         name = fc.name
         args = dict(fc.args or {})
-
-        print(f"[SLON] 🔧 {name}  {args}")
-        self.ui.set_state("THINKING")
-
-        if authorize_tool is not None and self.runtime_stack is not None:
-            allowed, reason = authorize_tool(
-                self.runtime_stack, name, args, source="desktop_ui"
-            )
-            if not allowed and "confirm" in reason.lower():
-                control_plane = getattr(self.ui, "control_plane", None)
-                if control_plane is not None:
-                    allowed = await asyncio.to_thread(
-                        control_plane.request_approval,
-                        name,
-                        args,
-                        source="desktop_ui",
-                        reason=reason,
-                    )
-                    if allowed:
-                        reason = "approved by paired remote device"
-            if not allowed:
-                msg = f"Blocked by SafetyPolicy: {reason}"
-                print(f"[SLON] 🛑 {msg}")
-                try:
-                    self.ui.write_log(f"SYS: {msg}")
-                except Exception:
-                    pass
-                if not self.ui.muted:
-                    self.ui.set_state("LISTENING")
-                return types.FunctionResponse(
-                    id=fc.id,
-                    name=name,
-                    response={"error": msg},
-                )
-
-        if name == "save_memory":
-            category = args.get("category", "notes")
-            key      = args.get("key", "")
-            value    = args.get("value", "")
-            if key and value:
-                update_memory({category: {key: {"value": value}}})
-                print(f"[Memory] 💾 save_memory: {category}/{key} = {value}")
-            if not self.ui.muted:
-                self.ui.set_state("LISTENING")
-            return types.FunctionResponse(
-                id=fc.id, name=name,
-                response={"result": "ok", "silent": True}
-            )
-
-        loop   = asyncio.get_event_loop()
-        result = "Done."
-
-        try:
-            if name == "open_app":
-                r = await loop.run_in_executor(None, lambda: open_app(parameters=args, response=None, player=self.ui))
-                result = r or f"Opened {args.get('app_name')}."
-
-            elif name == "weather_report":
-                r = await loop.run_in_executor(None, lambda: weather_action(parameters=args, player=self.ui))
-                result = r or "Weather delivered."
-
-            elif name == "browser_control":
-                r = await loop.run_in_executor(None, lambda: browser_control(parameters=args, player=self.ui))
-                result = r or "Done."
-
-            elif name == "file_controller":
-                r = await loop.run_in_executor(None, lambda: file_controller(parameters=args, player=self.ui))
-                result = r or "Done."
-
-            elif name == "send_message":
-                r = await loop.run_in_executor(None, lambda: send_message(parameters=args, response=None, player=self.ui, session_memory=None))
-                result = r or f"Message sent to {args.get('receiver')}."
-
-            elif name == "reminder":
-                r = await loop.run_in_executor(None, lambda: reminder(parameters=args, response=None, player=self.ui))
-                result = r or "Reminder set."
-
-            elif name == "youtube_video":
-                r = await loop.run_in_executor(None, lambda: youtube_video(parameters=args, response=None, player=self.ui))
-                result = r or "Done."
-            elif name == "file_processor":
-                if not args.get("file_path") and self.ui.current_file:
-                    args["file_path"] = self.ui.current_file
-                r = await loop.run_in_executor(
-                    None,
-                    lambda: file_processor(parameters=args, player=self.ui, speak=self.speak)
-                )
-                result = r or "Done."
-
-
-            elif name == "screen_process":
-                threading.Thread(
-                    target=screen_process,
-                    kwargs={"parameters": args, "response": None,
-                            "player": self.ui, "session_memory": None},
-                    daemon=True
-                ).start()
-                result = "Vision module activated. Stay completely silent — vision module will speak directly."
-
-            elif name == "computer_settings":
-                r = await loop.run_in_executor(None, lambda: computer_settings(parameters=args, response=None, player=self.ui))
-                result = r or "Done."
-
-            elif name == "desktop_control":
-                r = await loop.run_in_executor(None, lambda: desktop_control(parameters=args, player=self.ui))
-                result = r or "Done."
-
-            elif name == "code_helper":
-                r = await loop.run_in_executor(None, lambda: code_helper(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Done."
-
-            elif name == "dev_agent":
-                r = await loop.run_in_executor(None, lambda: dev_agent(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Done."
-
-            elif name == "agent_task":
-                from agent.task_queue import get_queue, TaskPriority
-                priority_map = {"low": TaskPriority.LOW, "normal": TaskPriority.NORMAL, "high": TaskPriority.HIGH}
-                priority = priority_map.get(args.get("priority", "normal").lower(), TaskPriority.NORMAL)
-                task_id  = get_queue().submit(goal=args.get("goal", ""), priority=priority, speak=self.speak)
-                result   = f"Task started (ID: {task_id})."
-
-            elif name == "web_search":
-                r = await loop.run_in_executor(None, lambda: web_search_action(parameters=args, player=self.ui))
-                result = r or "Done."
-
-            elif name == "computer_control":
-                r = await loop.run_in_executor(None, lambda: computer_control(parameters=args, player=self.ui))
-                result = r or "Done."
-
-            elif name == "game_updater":
-                r = await loop.run_in_executor(None, lambda: game_updater(parameters=args, player=self.ui, speak=self.speak))
-                result = r or "Done."
-
-            elif name == "flight_finder":
-                r = await loop.run_in_executor(None, lambda: flight_finder(parameters=args, player=self.ui))
-                result = r or "Done."
-            elif name == "shutdown_slon" or name == "shutdown_jarvis":
-                self.ui.write_log("SYS: Shutdown requested.")
-                self.speak("Goodbye, sir.")
-
-                def _shutdown():
-                    import time, sys, os
-                    time.sleep(1)
-                    os._exit(0)
-
-                threading.Thread(target=_shutdown, daemon=True).start()
-            else:
-                result = f"Unknown tool: {name}"
-
-        except Exception as e:
-            result = f"Tool '{name}' failed: {e}"
-            traceback.print_exc()
-            self.speak_error(name, e)
-
-        if not self.ui.muted:
-            self.ui.set_state("LISTENING")
-
-        print(f"[SLON] 📤 {name} → {str(result)[:80]}")
-
-        return types.FunctionResponse(
-            id=fc.id, name=name,
-            response={"result": result}
+        logger.info("[SLON] 🔧 %s", name)
+        self._emit_event(
+            RuntimeEventKind.TOOL_STARTED,
+            tool_call_id=fc.id,
+            tool_name=name,
         )
+        self._emit_event(
+            RuntimeEventKind.TOOL_PROGRESS,
+            tool_call_id=fc.id,
+            tool_name=name,
+            progress=0.0,
+        )
+        self.latency_trace.mark("tool_execution_start")
+        if persist:
+            await self._persist_tool_call(fc)
+
+        result = await self.tool_bridge.execute(
+            name,
+            args,
+            intent="Gemini Live function call",
+            call_id=fc.id,
+        )
+        self.latency_trace.mark_at("approval_start", result.approval_started_at)
+        self.latency_trace.mark_at("approval_finish", result.approval_finished_at)
+        self.latency_trace.mark_at("tool_handler_start", result.handler_started_at)
+        self.latency_trace.mark("tool_execution_finish")
+        if not self.ui.muted:
+            self._emit_event(RuntimeEventKind.LISTENING)
+        if result.ok:
+            value = result.data if result.data is not None else result.message or "Done."
+            response = {"result": value}
+        else:
+            response = {"error": result.message, "code": result.code}
+            self.ui.write_log(
+                f"{t('error.tool_execution_failed', code=name)}: {str(result.message or result.code)[:120]}"
+            )
+        logger.info("[SLON] 📤 %s → %s", name, "ok" if result.ok else result.code)
+        self.latency_trace.mark("observation_returned")
+        if result_sink is not None:
+            result_sink[fc.id] = (result, value if result.ok else None)
+        if persist:
+            try:
+                await self._persist_tool_result(
+                    fc, result, value if result.ok else None
+                )
+            except Exception as exc:
+                # The handler may already have produced a side effect. Never
+                # suppress its native response or invite a provider retry just
+                # because durable recording failed afterward.
+                self.ui.write_log(
+                    f"{t('error.tool_execution_failed', code='durable_record')}: {type(exc).__name__}"
+                )
+        self._emit_event(
+            RuntimeEventKind.TOOL_FINISHED,
+            tool_call_id=fc.id,
+            tool_name=name,
+            code=result.code,
+        )
+        self._emit_event(
+            RuntimeEventKind.TOOL_PROGRESS,
+            tool_call_id=fc.id,
+            tool_name=name,
+            progress=1.0,
+            code=result.code,
+        )
+        return types.FunctionResponse(id=fc.id, name=name, response=response)
+
+    async def _execute_tools(self, calls) -> list[types.FunctionResponse]:
+        """Run only an explicitly safe, independent Live batch concurrently."""
+        specs = []
+        identities = []
+        for call in calls:
+            try:
+                spec = self.tool_registry.get(call.name)
+            except Exception:
+                spec = None
+            specs.append(spec)
+            identities.append((call.name, repr(sorted(dict(call.args or {}).items()))))
+        safe = all(
+            spec is not None
+            and spec.parallel_safe
+            and spec.read_only
+            and spec.idempotent
+            and not spec.side_effects
+            for spec in specs
+        )
+        independent = len(set(identities)) == len(identities)
+        if safe and independent:
+            await self._start_live_turn()
+            for call in calls:
+                await self._persist_tool_call(call)
+            captured = {}
+            responses = list(await asyncio.gather(*(
+                self._execute_tool(call, persist=False, result_sink=captured)
+                for call in calls
+            )))
+            for call in calls:
+                result, value = captured[call.id]
+                try:
+                    await self._persist_tool_result(call, result, value)
+                except Exception as exc:
+                    self.ui.write_log(
+                        f"{t('error.tool_execution_failed', code='durable_record')}: {type(exc).__name__}"
+                    )
+            return responses
+        results = []
+        for call in calls:
+            results.append(await self._execute_tool(call))
+        return results
 
     async def _send_realtime(self):
-        while True:
-            msg = await self.out_queue.get()
-            await self.session.send_realtime_input(media=msg)
+        await self.audio.send_realtime()
 
     async def _listen_audio(self):
-        print("[SLON] 🎤 Mic started")
-        loop = asyncio.get_event_loop()
-
-        def callback(indata, frames, time_info, status):
-            with self._speaking_lock:
-                slon_speaking = self._is_speaking
-            if not slon_speaking and not self.ui.muted:
-                data = indata.tobytes()
-                loop.call_soon_threadsafe(
-                    self.out_queue.put_nowait,
-                    {"data": data, "mime_type": "audio/pcm"}
-                )
-
-        try:
-            with sd.InputStream(
-                samplerate=SEND_SAMPLE_RATE,
-                channels=CHANNELS,
-                dtype="int16",
-                blocksize=CHUNK_SIZE,
-                callback=callback,
-            ):
-                print("[SLON] 🎤 Mic stream open")
-                while True:
-                    await asyncio.sleep(0.1)
-        except Exception as e:
-            print(f"[SLON] ❌ Mic: {e}")
-            raise
+        await self.audio.listen()
 
     async def _receive_audio(self):
-        print("[SLON] 👂 Recv started")
-        out_buf, in_buf = [], []
+        if self.session is None or self.audio.audio_in_queue is None:
+            raise RuntimeError("live session is not connected")
+        await receive_live_session(
+            session=self.session,
+            audio_in_queue=self.audio.audio_in_queue,
+            enqueue_playback=self.audio.enqueue_playback,
+            interrupt_playback=self.audio.interrupt_playback,
+            ui=self.ui,
+            set_speaking=self.set_speaking,
+            execute_tool=self._execute_tool,
+            execute_tools=self._execute_tools,
+            update_memory=_update_memory_async,
+            latency_trace=self.latency_trace,
+            emit_event=self._emit_event,
+            on_turn_started=self._start_live_turn,
+            on_turn_finished=self._finish_live_turn,
+        )
 
-        try:
-            while True:
-                async for response in self.session.receive():
+    async def _start_live_turn(self) -> None:
+        if self._active_turn_id is not None:
+            return
+        self._active_turn_id = str(uuid.uuid4())
+        self._active_user_persisted = False
+        manager = getattr(self.runtime_stack, "session_manager", None)
+        if manager is not None:
+            self._active_session_run = await asyncio.to_thread(
+                manager.start_run,
+                self.session_id,
+                workspace_id=self.workspace_id,
+                effective_provider_id=self.selected_model.provider_id,
+                effective_model_id=self.selected_model.model_id,
+                turn_id=self._active_turn_id,
+            )
 
-                    if response.data:
-                        self.audio_in_queue.put_nowait(response.data)
+    async def _finish_live_turn(
+        self, user_text: str, assistant_text: str, interrupted: bool
+    ) -> None:
+        manager = getattr(self.runtime_stack, "session_manager", None)
+        turn_id = self._active_turn_id
+        run = self._active_session_run
+        if manager is not None and turn_id is not None:
+            from sessions import RunStatus, TranscriptKind, TranscriptState
 
-                    if response.server_content:
-                        sc = response.server_content
+            state = (
+                TranscriptState.INTERRUPTED
+                if interrupted else TranscriptState.COMPLETED
+            )
 
-                        if sc.output_transcription and sc.output_transcription.text:
-                            self.set_speaking(True)
-                            txt = sc.output_transcription.text.strip()
-                            if txt:
-                                out_buf.append(txt)
+            def persist() -> None:
+                if user_text and not self._active_user_persisted:
+                    manager.append_event(
+                        self.session_id, workspace_id=self.workspace_id,
+                        turn_id=turn_id, kind=TranscriptKind.TEXT,
+                        state=state, role="user", text=user_text,
+                    )
+                if assistant_text:
+                    manager.append_event(
+                        self.session_id, workspace_id=self.workspace_id,
+                        turn_id=turn_id, kind=TranscriptKind.TEXT,
+                        state=state, role="assistant", text=assistant_text,
+                    )
+                if run is not None:
+                    manager.finish_run(
+                        run,
+                        RunStatus.INTERRUPTED if interrupted else RunStatus.COMPLETED,
+                    )
 
-                        if sc.input_transcription and sc.input_transcription.text:
-                            txt = sc.input_transcription.text.strip()
-                            if txt:
-                                in_buf.append(txt)
-
-                        if sc.turn_complete:
-                            self.set_speaking(False)
-
-                            full_in = " ".join(in_buf).strip()
-                            if full_in:
-                                self.ui.write_log(f"You: {full_in}")
-                            in_buf = []
-
-                            full_out = " ".join(out_buf).strip()
-                            if full_out:
-                                self.ui.write_log(f"Slon: {full_out}")
-                            out_buf = []
-
-                            if full_in and len(full_in) > 5:
-                                threading.Thread(
-                                    target=_update_memory_async,
-                                    args=(full_in, full_out),
-                                    daemon=True
-                                ).start()
-
-                    if response.tool_call:
-                        fn_responses = []
-                        for fc in response.tool_call.function_calls:
-                            print(f"[SLON] 📞 {fc.name}")
-                            fr = await self._execute_tool(fc)
-                            fn_responses.append(fr)
-                        await self.session.send_tool_response(
-                            function_responses=fn_responses
-                        )
-
-        except Exception as e:
-            print(f"[SLON] ❌ Recv: {e}")
-            traceback.print_exc()
-            raise
+            await asyncio.to_thread(persist)
+        self._active_turn_id = None
+        self._active_session_run = None
+        self._active_user_persisted = False
 
     async def _play_audio(self):
-        print("[SLON] 🔊 Play started")
-        loop = asyncio.get_event_loop()
+        await self.audio.play()
 
-        stream = sd.RawOutputStream(
-            samplerate=RECEIVE_SAMPLE_RATE,
-            channels=CHANNELS,
-            dtype="int16",
-            blocksize=CHUNK_SIZE,
+    def _on_connected(self, session, loop):
+        self.connection_generation += 1
+        self.session = session
+        self._loop = loop
+        self.audio.bind(session)
+        self.audio_in_queue = self.audio.audio_in_queue
+        self.out_queue = self.audio.out_queue
+
+    def _on_disconnected(self):
+        if self._active_session_run is not None:
+            from sessions import RunStatus
+
+            manager = getattr(self.runtime_stack, "session_manager", None)
+            if manager is not None:
+                manager.finish_run(self._active_session_run, RunStatus.INTERRUPTED)
+        self._active_session_run = None
+        self._active_turn_id = None
+        self._active_user_persisted = False
+        self.set_speaking(False)
+        self.session = None
+        self._loop = None
+        self.audio.unbind()
+        self.audio_in_queue = None
+        self.out_queue = None
+
+    def _session_tasks(self):
+        return (
+            self._send_realtime(),
+            self._listen_audio(),
+            self._receive_audio(),
+            self._play_audio(),
         )
-        stream.start()
-        try:
-            while True:
-                chunk = await self.audio_in_queue.get()
-                self.set_speaking(True)
-                await asyncio.to_thread(stream.write, chunk)
-        except Exception as e:
-            print(f"[SLON] ❌ Play: {e}")
-            raise
-        finally:
-            self.set_speaking(False)
-            stream.stop()
-            stream.close()
 
     async def run(self):
+        if self._closed:
+            raise RuntimeError("logical session is closed")
         client = genai.Client(
             api_key=_get_api_key(),
-            http_options={"api_version": "v1beta"}
+            http_options={"api_version": "v1beta"},
         )
+        task = asyncio.current_task()
+        loop = asyncio.get_running_loop()
+        manager = getattr(self.runtime_stack, "session_manager", None)
 
-        while True:
-            try:
-                print("[SLON] 🔌 Connecting...")
-                self.ui.set_state("THINKING")
-                config = self._build_config()
+        def cancel() -> None:
+            if task is not None:
+                loop.call_soon_threadsafe(task.cancel)
 
-                async with (
-                    client.aio.live.connect(model=LIVE_MODEL, config=config) as session,
-                    asyncio.TaskGroup() as tg,
-                ):
-                    self.session        = session
-                    self._loop          = asyncio.get_event_loop()
-                    self.audio_in_queue = asyncio.Queue()
-                    self.out_queue      = asyncio.Queue(maxsize=10)
+        unregister = (
+            manager.register_canceller(self.session_id, cancel)
+            if manager is not None else lambda: None
+        )
+        try:
+            await run_live_lifecycle(
+                client=client,
+                model_id=self.selected_model.model_id,
+                build_config=self._build_config,
+                on_connected=self._on_connected,
+                on_disconnected=self._on_disconnected,
+                tasks=self._session_tasks,
+                ui=self.ui,
+                emit_event=self._emit_event,
+                should_stop=lambda: self._closed,
+            )
+        finally:
+            unregister()
 
-                    print("[SLON] ✅ Connected.")
-                    self.ui.set_state("LISTENING")
-                    self.ui.write_log("SYS: Slon online.")
-
-                    tg.create_task(self._send_realtime())
-                    tg.create_task(self._listen_audio())
-                    tg.create_task(self._receive_audio())
-                    tg.create_task(self._play_audio())
-                    
-            except Exception as e:
-                print(f"[SLON] ⚠️ {e}")
-                traceback.print_exc()
-
-            self.set_speaking(False)
-            self.ui.set_state("THINKING")
-            print("[SLON] 🔄 Reconnecting in 3s...")
-            await asyncio.sleep(3)
+    async def close(self) -> None:
+        """Idempotently stop the transport and close the logical session."""
+        if self._closed:
+            return
+        self._closed = True
+        session = self.session
+        manager = getattr(self.runtime_stack, "session_manager", None)
+        try:
+            if session is not None:
+                await session.close()
+        finally:
+            if manager is not None:
+                await asyncio.to_thread(
+                    manager.close, self.session_id, workspace_id=self.workspace_id
+                )
 
 JarvisLive = SlonLive
 
+
+def _run_chat_agent(ui, settings, stack=None):
+    """Run a provider-agnostic chat loop using AgentLoop + tool registry."""
+    from acta.tools.builtin import build_builtin_registry
+    from acta.tools.executor import ToolExecutor as SyncToolExecutor
+    from acta.safety.policy import SafetyPolicy
+    from agent.runtime import AgentLoop
+    from providers.router import Router
+
+    # Ensure all provider factories are registered
+    from providers.openai import provider as _  # noqa: F401  # ensure registration
+    from providers.gemini import provider as __  # noqa: F401  # ensure registration
+    from providers.openrouter import provider as ___  # noqa: F401  # ensure registration
+    from providers.local import ollama, llama_cpp  # noqa: F401  # ensure registration
+
+    provider_id = getattr(settings, "provider_id", "gemini")
+    model_id = getattr(settings, "model_id", "")
+
+    # Audio-capable Gemini uses SlonLive, not AgentLoop.
+    if provider_id == "gemini" and model_id and "audio" in model_id.lower():
+        return False
+
+    model_info = _resolve_model_info(provider_id, model_id)
+
+    # Build key provider callback
+    def key_provider(name: str) -> str | None:
+        from config.secrets import get_provider_secret
+        return get_provider_secret(name)
+
+    # Prefer the stack's Router (already wired with model_id / base_url)
+    if stack is not None:
+        router = getattr(stack, "router", None) or None
+        tool_registry = getattr(stack, "tool_registry", None)
+        safety = getattr(stack, "safety", None)
+        tool_executor_factory = getattr(stack, "sync_tool_executor_factory", None)
+        if router is not None:
+            try:
+                provider_instance = router._resolve(provider_id)
+            except Exception as exc:  # pragma: no cover - needs api key
+                ui.write_log(t("error.unknown", ) + ": " + str(exc))
+                logger.error("[Main] %s: %s", t("error.unknown"), exc)
+                return True
+        else:
+            router = None
+            tool_registry = None
+            safety = None
+            tool_executor_factory = None
+    else:
+        router = None
+        tool_registry = None
+        safety = None
+        tool_executor_factory = None
+
+    # Fall back to building from scratch when stack didn't provide router
+    if router is None:
+        router = Router(
+            provider_id=provider_id,
+            network_mode=getattr(settings, "network_mode", None),
+            privacy_profile=getattr(settings, "privacy_profile", None),
+            routing_mode=getattr(settings, "routing_mode", None),
+            key_provider=key_provider,
+        )
+        try:
+            provider_instance = router._resolve(provider_id)
+        except Exception as exc:  # pragma: no cover - needs api key
+            ui.write_log(t("error.unknown", ) + ": " + str(exc))
+            logger.error("[Main] %s: %s", t("error.unknown"), exc)
+            return True
+
+    # Build tool registry / executor when stack didn't provide them
+    if tool_registry is None:
+        tool_registry = build_builtin_registry()
+    if safety is None:
+        safety = SafetyPolicy()
+    if tool_executor_factory is None:
+        tool_executor_factory = lambda reg, sat: SyncToolExecutor(reg, sat)
+
+    tool_executor = tool_executor_factory(tool_registry, safety)
+
+    # Build and run the AgentLoop
+    agent_loop = AgentLoop(
+        model=model_info,
+        provider=router,  # use the full router (handles routing + resolution)
+        tool_executor=tool_executor,
+    )
+
+    # Thread-safe queue for user input from UI
+    input_queue: "queue.Queue[str | None]" = queue.Queue()
+    history: list = []  # multi-turn conversation history
+    _running = [True]  # mutable container for closure
+
+    def _on_command(text: str):
+        if _running[0]:
+            input_queue.put_nowait(text)
+
+    ui.on_text_command = _on_command
+    ui.start_wake_word_listener(_on_command)
+
+    async def _chat_loop():
+        """Async loop that processes user commands through AgentLoop."""
+        ui.write_log(f"{t('status.ready')} [{provider_id}]")
+        try:
+            while _running[0]:
+                try:
+                    # Wait for user input (blocks up to 500ms)
+                    user_input = input_queue.get(timeout=0.5)
+                    if user_input is None:
+                        break  # shutdown signal
+
+                    user_input = user_input.strip()
+                    if not user_input:
+                        continue
+
+                    ui.write_log(t("chat.user", text=user_input))
+                    turn_started = time.monotonic()
+
+                    # Run AgentLoop turn with history
+                    def _on_message(msg):
+                        """Display agent messages back to UI."""
+                        try:
+                            if hasattr(msg, 'content'):
+                                text = msg.content if msg.content else ""
+                                if text:
+                                    ui.write_log(text)
+                            elif hasattr(msg, 'text'):
+                                if msg.text:
+                                    ui.write_log(msg.text)
+                        except Exception:
+                            pass
+
+                    result = await agent_loop.run(
+                        user_goal=user_input,
+                        history=history,
+                        on_message=_on_message,
+                    )
+                    response_text = getattr(result, "text", "") or getattr(result, "content", "")
+                    elapsed_ms = (time.monotonic() - turn_started) * 1000.0
+                    ui.write_log(f"SYS: local voice/text turn latency total={elapsed_ms:.1f}ms")
+                    if response_text:
+                        ui.speak_local(str(response_text))
+
+                    # Update history with agent response for multi-turn
+                    try:
+                        if result.steps:
+                            last_step = result.steps[-1]
+                            if last_step.tool_name and last_step.observation:
+                                history.extend([
+                                    {"role": "assistant", "content": last_step.tool_name or ""},
+                                    {"role": "tool", "content": str(last_step.observation)},
+                                ])
+                    except Exception:
+                        pass
+
+                except queue.Empty:
+                    continue
+                except Exception as exc:
+                    ui.write_log(t("error.unknown", ) + ": " + str(exc))
+                    logger.error("[Main] %s: %s", t("error.unknown"), exc, exc_info=True)
+
+        except asyncio.CancelledError:
+            _running[0] = False
+        finally:
+            _running[0] = False
+
+    logger.info("[Main] provider=%s model=%s", provider_id, model_id or model_info.model_id)
+    ui.write_log(f"{t('status.connected')} [{provider_id}]")
+    asyncio.run(_chat_loop())
+    return True
 
 def main():
     ui = SlonUI("face.png")
 
     def runner():
         ui.wait_for_api_key()
-        # Live Gemini path remains the default when Gemini keys are present.
-        stack = _build_stack()
-        slon = SlonLive(ui, runtime_stack=stack)
-        try:
-            asyncio.run(slon.run())
-        except KeyboardInterrupt:
-            print("\nShutting down...")
+        settings = _get_settings()
+        stack = getattr(ui, "_runtime_stack", None) or _build_stack()
+
+        selected_provider = getattr(settings, "provider_id", "gemini")
+
+        # Check if this is an audio-capable Gemini model → use SlonLive
+        selected_model_id = getattr(settings, "model_id", "")
+        is_gemini_audio = (
+            selected_provider == "gemini"
+            and selected_model_id
+            and "audio" in selected_model_id.lower()
+        )
+
+        if is_gemini_audio:
+            slon = SlonLive(ui, runtime_stack=stack)
+            try:
+                asyncio.run(slon.run())
+            except KeyboardInterrupt:
+                logger.info("\n%s", t("status.disconnected"))
+        else:
+            # Chat-based agent loop for non-Gemini or non-audio models
+            _run_chat_agent(ui, settings, stack)
+            logger.info("\n%s", t("agent.completed"))
 
     threading.Thread(target=runner, daemon=True).start()
     ui.root.mainloop()

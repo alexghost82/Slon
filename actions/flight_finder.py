@@ -1,5 +1,10 @@
+from __future__ import annotations
+
 #flight_finder.py
 import json
+
+from i18n import t
+
 import re
 import subprocess
 import sys
@@ -15,8 +20,6 @@ def _get_base_dir() -> Path:
 
 
 BASE_DIR        = _get_base_dir()
-API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
-
 _MONTH_MAP: dict[str, int] = {
 
     "january": 1, "february": 2, "march": 3,     "april": 4,
@@ -285,9 +288,9 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
     save        = bool(params.get("save", False))
 
     if not origin or not destination:
-        return "Please provide both origin and destination, sir."
+        return "Укажите пункт отправления и назначения."
     if not date_raw:
-        return "Please provide a departure date, sir."
+        return "Укажите дату отправления."
 
     # Normalise cabin value
     if cabin not in _CABIN_CODE:
@@ -314,7 +317,7 @@ def flight_finder(parameters: dict, player=None, speak=None) -> str:
         )
 
         if not raw_text:
-            return "Could not retrieve flight data, sir. The page may not have loaded."
+            return "Не удалось получить данные о рейсах. Возможно, страница не загрузилась."
 
         if speak:
             speak("Analysing the results now, sir.")

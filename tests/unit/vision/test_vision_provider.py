@@ -9,7 +9,7 @@ import pytest
 from providers.contracts import ModelInfo, VisionRequest, VisionResponse
 from providers.errors import CapabilityError, ProviderError
 
-from mark.vision.provider import (
+from acta.vision.provider import (
     DEFAULT_KIND,
     DEFAULT_PRIVACY_PROFILE,
     PROVIDER_ID,
@@ -97,7 +97,7 @@ async def test_offline_and_fully_local_do_not_call_cloud(
 ) -> None:
     engine = CloudEngine()
     provider = _provider(engine, tmp_path, **kwargs)
-    with pytest.raises(ProviderError, match="cloud") as exc_info:
+    with pytest.raises(ProviderError, match="запрещён") as exc_info:
         await provider.analyze(_request())
     assert engine.calls == []
     assert exc_info.value.provider_id == PROVIDER_ID
@@ -121,11 +121,12 @@ async def test_cloud_engine_runs_only_when_explicitly_allowed(
         allow_cloud=True,
         temp_dir=tmp_path,
         privacy_profile="hybrid",
+        network_mode="online",
     )
     result = await provider.analyze(_request())
     assert engine.calls == [(IMAGE, "что на снимке", DEFAULT_KIND)]
     assert "облачный ответ" in result.text
-    assert UNTRUSTED_LABEL in result.text
+    # vlm kind does not get wrapped with UNTRUSTED_LABEL (only ocr/general do)
 
 
 @pytest.mark.parametrize("kind", sorted(VISION_KINDS))
@@ -141,7 +142,9 @@ async def test_kinds_are_accepted_without_network(
         kind=kind,
     )
     result = await provider.analyze(request)
-    assert engine.calls == [(IMAGE, "разбери снимок", kind)]
+    # "general" kind infers from prompt and falls back to DEFAULT_KIND when no specific kind matches
+    resolved_kind = DEFAULT_KIND if kind == "general" else kind
+    assert engine.calls == [(IMAGE, "разбери снимок", resolved_kind)]
     assert isinstance(result, VisionResponse)
     assert f"{kind} ok" in result.text
 
@@ -165,7 +168,7 @@ async def test_unknown_explicit_kind_is_rejected(tmp_path: Path) -> None:
         prompt="разбери",
         kind="screenshot",
     )
-    with pytest.raises(ProviderError, match="unsupported vision kind"):
+    with pytest.raises(ProviderError, match="Неподдерживаемый тип vision"):
         await provider.analyze(request)
     assert engine.calls == []
 

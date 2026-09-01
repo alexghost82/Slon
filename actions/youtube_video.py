@@ -1,5 +1,10 @@
+from __future__ import annotations
+
 #youtube_video.py
 import json
+
+from i18n import t
+
 import re
 import sys
 import time
@@ -34,8 +39,6 @@ def _get_base_dir() -> Path:
 
 
 BASE_DIR        = _get_base_dir()
-API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
-
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (X11; Linux x86_64) "
@@ -261,17 +264,17 @@ def _scrape_trending(region: str = "TR", max_results: int = 8) -> list[dict]:
 def _handle_play(parameters: dict, player) -> str:
     query = parameters.get("query", "").strip()
     if not query:
-        return "Please tell me what you'd like to watch, sir."
+        return "Сообщите, какое видео вы хотите посмотреть."
 
     if player:
-        player.write_log(f"[YouTube] Searching: {query}")
+        player.write_log("[YouTube] Searching")
 
-    print(f"[YouTube] 🔍 Scraping first non-Shorts video for: {query}")
+    print(f"[YouTube] 🔍 Searching query_length={len(query)}")
 
     video_url = _scrape_first_video_url(query)
 
     if video_url:
-        print(f"[YouTube] ▶️ Opening: {video_url}")
+        print("[YouTube] ▶️ Opening selected video")
         _open_url(video_url)
         return f"Playing: {query}"
 
@@ -291,22 +294,22 @@ def _handle_summarize(parameters: dict, player, speak) -> str:
 
     url = _ask_for_url("Please paste the YouTube video URL:")
     if not url:
-        return "No URL provided, sir. Summary cancelled."
+        return "Ссылка не указана. Резюме отменено."
     if not _is_valid_youtube_url(url):
-        return "That doesn't appear to be a valid YouTube URL, sir."
+        return "Это не похоже на действительную ссылку YouTube."
 
     video_id = _extract_video_id(url)
     if not video_id:
-        return "Could not extract video ID from that URL, sir."
+        return "Не удалось извлечь ID видео из ссылки."
 
     if player:
-        player.write_log(f"[YouTube] Summarizing: {url}")
+        player.write_log("[YouTube] Summarizing video")
     if speak:
         speak("Fetching the transcript now, sir. One moment.")
 
     transcript = _get_transcript(video_id)
     if not transcript:
-        return "I couldn't retrieve a transcript for that video, sir."
+        return "Не удалось получить расшифровку для этого видео."
 
     if speak:
         speak("Transcript retrieved. Generating summary now.")
@@ -331,18 +334,18 @@ def _handle_get_info(parameters: dict, player, speak) -> str:
     if not url:
         url = _ask_for_url("Please paste the YouTube video URL:")
     if not url or not _is_valid_youtube_url(url):
-        return "Please provide a valid YouTube URL, sir."
+        return "Укажите корректную ссылку YouTube."
 
     video_id = _extract_video_id(url)
     if not video_id:
-        return "Could not extract video ID, sir."
+        return "Не удалось извлечь ID видео."
 
     if player:
-        player.write_log(f"[YouTube] Getting info: {url}")
+        player.write_log("[YouTube] Getting video info")
 
     info = _scrape_video_info(video_id)
     if not info:
-        return "Could not retrieve video information, sir."
+        return "Не удалось получить информацию о видео."
 
     lines = [
         f"{key.capitalize()}: {info[key]}"
@@ -400,7 +403,7 @@ def youtube_video(
 
     if player:
         player.write_log(f"[YouTube] Action: {action}")
-    print(f"[YouTube] ▶️  Action: {action}  Params: {params}")
+    print(f"[YouTube] ▶️  Action: {action} keys={sorted(params)}")
 
     handler = _ACTION_MAP.get(action)
     if handler is None:

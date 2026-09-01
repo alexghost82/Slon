@@ -3,19 +3,25 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator
 from typing import Any
 
-from providers.capabilities import require_capability
+from providers.capabilities import require_capability, require_provider_match
 from providers.contracts import (
     ChatEvent,
-    ChatMessage,
     ChatRequest,
     ChatResponse,
     ModelInfo,
     ProviderStatus,
+    ToolCall,
 )
-from providers.errors import ProviderAuthError
+from providers.errors import ProviderAuthError, ProviderError
+from providers.openai_compat import (
+    ToolCallStreamAssembler,
+    finish_reason,
+    messages_payload,
+    parse_tool_calls,
+)
 from providers.openrouter.catalog import parse_models_payload
 from providers.openrouter.client import DEFAULT_API_URL, DEFAULT_TIMEOUT, OpenRouterClient, RequestFn
 from providers.openrouter.errors import PROVIDER_ID
@@ -65,21 +71,33 @@ class OpenRouterChatProvider:
         return parse_models_payload(client.get_json(client.models_url))
 
     async def chat(self, request: ChatRequest) -> ChatResponse:
+        require_provider_match(request.model, PROVIDER_ID)
         require_capability(request.model, request.role)
         data = self._http().post_json(self._api_url, _chat_payload(request))
         return ChatResponse(
-            text=_message_text(data),
+            text=_message_text(data, PROVIDER_ID),
             provider_id=PROVIDER_ID,
             model_id=request.model.model_id,
+            tool_calls=_tool_calls(data, PROVIDER_ID),
         )
 
     async def stream(self, request: ChatRequest) -> AsyncIterator[ChatEvent]:
+        require_provider_match(request.model, PROVIDER_ID)
         require_capability(request.model, request.role)
         payload = _chat_payload(request, stream=True)
+        assembler = ToolCallStreamAssembler(PROVIDER_ID)
         for line in self._http().post_sse_lines(self._api_url, payload):
-            event = _parse_sse_line(line)
+            event, data = _parse_sse_line_with_payload(line)
             if event is not None:
                 yield event
+            if data is not None:
+                assembler.add(data)
+                if finish_reason(data) == "tool_calls":
+                    for call in assembler.finish():
+                        yield ChatEvent(type="tool_call", tool_call=call)
+        if assembler.pending:
+            for call in assembler.finish():
+                yield ChatEvent(type="tool_call", tool_call=call)
         yield ChatEvent(type="done")
 
 
@@ -93,47 +111,85 @@ def _normalize_key(api_key: str | None) -> str | None:
 def _chat_payload(request: ChatRequest, *, stream: bool = False) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "model": request.model.model_id,
-        "messages": _messages_payload(request.messages),
+        "messages": messages_payload(request.messages),
     }
     if stream:
         payload["stream"] = True
+    if request.tools:
+        payload["tools"] = [
+            {
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": dict(tool.parameters),
+                },
+            }
+            for tool in request.tools
+        ]
+    if request.tool_choice is not None:
+        payload["tool_choice"] = request.tool_choice
     return payload
 
 
-def _messages_payload(messages: Sequence[ChatMessage]) -> list[dict[str, str]]:
-    return [{"role": message.role, "content": message.content} for message in messages]
-
-
-def _message_text(data: object) -> str:
+def _message_text(data: object, provider_id: str) -> str:
     if not isinstance(data, dict):
-        return ""
-    choices = data.get("choices") or []
-    if not isinstance(choices, list) or not choices:
-        return ""
+        raise ProviderError(
+            "OpenRouter returned an invalid response (not an object)",
+            provider_id=provider_id,
+        )
+    choices = data.get("choices")
+    if choices is None or not isinstance(choices, list) or not choices:
+        raise ProviderError(
+            "OpenRouter returned no choices",
+            provider_id=provider_id,
+        )
     first = choices[0]
     if not isinstance(first, dict):
-        return ""
-    message = first.get("message") or {}
+        raise ProviderError(
+            "OpenRouter returned an invalid response structure",
+            provider_id=provider_id,
+        )
+    message = first.get("message")
     if not isinstance(message, dict):
-        return ""
+        raise ProviderError(
+            "OpenRouter response missing message field",
+            provider_id=provider_id,
+        )
     content = message.get("content")
-    return content if isinstance(content, str) else ""
+    if not isinstance(content, str):
+        raise ProviderError(
+            "OpenRouter response content is not a string",
+            provider_id=provider_id,
+        )
+    return content
+
+
+def _tool_calls(data: object, provider_id: str) -> tuple[ToolCall, ...]:
+    return parse_tool_calls(data, provider_id)
 
 
 def _parse_sse_line(line: str) -> ChatEvent | None:
+    event, _payload = _parse_sse_line_with_payload(line)
+    return event
+
+
+def _parse_sse_line_with_payload(line: str) -> tuple[ChatEvent | None, dict[str, Any] | None]:
     raw = line.strip()
     if raw.startswith("data:"):
         raw = raw[5:].strip()
     if not raw or raw == "[DONE]":
-        return None
+        return None, None
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
-        return None
+        return None, None
+    if not isinstance(data, dict):
+        return None, None
     text = _delta_text(data)
     if not text:
-        return None
-    return ChatEvent(type="delta", text=text)
+        return None, data
+    return ChatEvent(type="delta", text=text), data
 
 
 def _delta_text(data: object) -> str:

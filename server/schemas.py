@@ -6,8 +6,8 @@ Messages and error envelopes never carry API keys or raw key material.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, fields, is_dataclass
-from typing import Mapping
 
 API_VERSION_PREFIX = "/v1"
 
@@ -44,23 +44,36 @@ _SECRET_FIELD_NAMES = frozenset(
     }
 )
 
-_MESSAGES: dict[str, str] = {
-    CODE_OK: "Request accepted.",
-    CODE_INVALID_REQUEST: "Request body failed validation.",
-    CODE_MISSING_FIELD: "A required field is missing.",
-    CODE_INVALID_TYPE: "A field has the wrong type.",
-    CODE_UNAUTHORIZED: "Pairing or authentication is required.",
-    CODE_NOT_FOUND: "Resource not found.",
-    CODE_APPROVAL_REQUIRED: "Mutating operation requires safety approval.",
-    CODE_IDEMPOTENCY_CONFLICT: "Idempotency key was reused with a different body.",
+# Map API error codes to i18n keys.
+_ERROR_KEYS: dict[str, str] = {
+    CODE_OK: "api.ok",
+    CODE_INVALID_REQUEST: "api.invalid_request",
+    CODE_MISSING_FIELD: "api.missing_field",
+    CODE_INVALID_TYPE: "api.invalid_type",
+    CODE_UNAUTHORIZED: "api.unauthorized",
+    CODE_NOT_FOUND: "api.not_found",
+    CODE_APPROVAL_REQUIRED: "api.approval_required",
+    CODE_IDEMPOTENCY_CONFLICT: "api.idempotency_conflict",
 }
 
-_UNKNOWN = "Desktop Control API rejected the request."
+_UNKNOWN_KEY = "api.unknown"
 
 
 def api_message(code: str) -> str:
-    """Return a secret-free explanation for a structured API error code."""
-    return _MESSAGES.get(code, _UNKNOWN)
+    """Return a secret-free explanation for a structured API error code.
+
+    Uses the catalog-backed translator (``tr``) so messages adapt
+    to the active locale.  Falls back to English if a key is missing.
+    """
+    from localization.translator import MissingTranslationError, tr
+
+    key = _ERROR_KEYS.get(code, _UNKNOWN_KEY)
+    try:
+        return tr(key)
+    except MissingTranslationError:
+        # Fallback: return a simple English string so the server never
+        # breaks even if the i18n catalog is incomplete.
+        return _MESSAGES.get(code, "Desktop Control API rejected the request.")
 
 
 class SchemaValidationError(Exception):
@@ -834,6 +847,47 @@ __all__ = [
     "CODE_NOT_FOUND",
     "CODE_OK",
     "CODE_UNAUTHORIZED",
+    "ERROR_CODES",
+    "ApiError",
+    "ApprovalDecisionRequest",
+    "ApprovalInfo",
+    "ApprovalListResponse",
+    "ChatRequest",
+    "ChatStreamEvent",
+    "MemoryDeleteRequest",
+    "MemoryEntry",
+    "MemoryGetResponse",
+    "ModelInfo",
+    "ModelsActivateRequest",
+    "ModelsListResponse",
+    "PairingCompleteRequest",
+    "PairingCompleteResponse",
+    "PairingStartRequest",
+    "PairingStartResponse",
+    "SchemaValidationError",
+    "ScreenCaptureRequest",
+    "ScreenCaptureResponse",
+    "StatusResponse",
+    "TaskCancelRequest",
+    "TaskCreateRequest",
+    "TaskInfo",
+    "TaskListResponse",
+    "api_message",
+    "schema_field_names",
+    "strip_secret_fields",
+]
+
+
+__all__ = [
+    "API_VERSION_PREFIX",
+    "CODE_OK",
+    "CODE_INVALID_REQUEST",
+    "CODE_MISSING_FIELD",
+    "CODE_INVALID_TYPE",
+    "CODE_UNAUTHORIZED",
+    "CODE_NOT_FOUND",
+    "CODE_APPROVAL_REQUIRED",
+    "CODE_IDEMPOTENCY_CONFLICT",
     "ERROR_CODES",
     "ApiError",
     "ApprovalDecisionRequest",

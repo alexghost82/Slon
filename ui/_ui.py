@@ -1,0 +1,2440 @@
+from __future__ import annotations
+from i18n import t
+
+from dataclasses import replace
+import base64
+import json
+import math
+import os
+import platform
+import random
+import secrets
+import subprocess
+import sys
+import threading
+import time
+from pathlib import Path
+
+import psutil
+
+from config.secrets import get_secret, set_secret
+from config.settings import load_settings, save_settings
+from config.schema import PROVIDER_IDS, DEFAULT_PROVIDER_ID
+
+from PyQt6.QtCore import (
+    QEasingCurve, QMimeData, QObject, QPointF, QRectF, QSize, Qt,
+    QTimer, QUrl, pyqtSignal, QPropertyAnimation, QAbstractAnimation,
+)
+from PyQt6.QtGui import (
+    QBrush, QColor, QDragEnterEvent, QDropEvent, QFont, QFontDatabase,
+    QKeySequence, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap,
+    QRadialGradient, QShortcut,
+)
+from PyQt6.QtWidgets import (
+    QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QMainWindow, QPushButton, QScrollArea, QSizePolicy, QTextEdit,
+    QVBoxLayout, QWidget, QProgressBar,
+)
+
+# Local Piper TTS + Desktop Control API + runtime bridge (Wave 12/13)
+try:
+    from speech.tts.local_factory import try_build_local_tts
+    from speech.tts.playback import play_wav_bytes
+except Exception:  # pragma: no cover - optional at UI import time
+    try_build_local_tts = None  # type: ignore[assignment]
+    play_wav_bytes = None  # type: ignore[assignment]
+try:
+    from speech.stt.local_factory import try_build_local_stt
+except Exception:  # pragma: no cover
+    try_build_local_stt = None  # type: ignore[assignment]
+try:
+    from providers.contracts import AudioRequest
+except Exception:  # pragma: no cover
+    AudioRequest = None  # type: ignore[assignment,misc]
+try:
+    from server.listener import DesktopControlListener
+except Exception:  # pragma: no cover
+    DesktopControlListener = None  # type: ignore[assignment,misc]
+try:
+    from gateway.bootstrap import build_gateway
+    from gateway.status import read_gateway_status
+except Exception:  # pragma: no cover
+    build_gateway = None  # type: ignore[assignment]
+    read_gateway_status = None  # type: ignore[assignment]
+try:
+    from server.tls import ensure_tls_material
+except Exception:  # pragma: no cover
+    ensure_tls_material = None  # type: ignore[assignment]
+try:
+    from acta.bridge import DesktopControlPlane, build_runtime_stack
+except Exception:  # pragma: no cover
+    DesktopControlPlane = None  # type: ignore[assignment,misc]
+    build_runtime_stack = None  # type: ignore[assignment]
+
+def _base_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent
+    return Path(__file__).resolve().parent.parent
+
+BASE_DIR   = _base_dir()
+
+_DEFAULT_W, _DEFAULT_H = 980, 700
+_MIN_W,     _MIN_H     = 820, 580
+_LEFT_W  = 172  # Improved spacing
+_RIGHT_W = 360
+
+_OS = platform.system()  # "Windows" | "Darwin" | "Linux"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# DESIGN TOKENS — Premium UI System
+# ────────────────────────────────────────────────────────────────────────────
+
+class Tokens:
+    """Design tokens: colors, spacing, typography, shadows."""
+    
+    # ── Colors: Semantic ──
+    BG_BASE      = "#000a10"    # L0: canvas
+    BG_L1        = "#010d17"    # L1: panels, base layer
+    BG_L2        = "#011420"    # L2: elevated elements
+    BG_L3        = "#011b28"    # L3: cards, boxes
+    
+    # ── Borders ──
+    BORDER_BASE  = "#0d3a4f"    # Neutral divider
+    BORDER_DIM   = "#0a2834"    # Subtle
+    BORDER_BOLD  = "#1a5c7a"    # Emphasized
+    BORDER_ACCENT = "#00b4d4"   # Focus
+    
+    # ── Primary (Cyan) ──
+    PRIMARY      = "#00d4ff"    # Primary action
+    PRIMARY_DIM  = "#007a99"    # Muted
+    PRIMARY_GHOST = "#001f2e"   # Very subtle
+    PRIMARY_GLOW = "#00e6ff"    # Bright
+    
+    # ── Accent (Orange) ──
+    ACCENT       = "#ff6b00"    # Alert, warmth
+    ACCENT_GOLD  = "#ffcc00"    # Secondary accent
+    ACCENT_GLOW  = "#ff8833"    # Hover
+    
+    # ── Status ──
+    SUCCESS      = "#00ff88"    # Green, active
+    SUCCESS_DIM  = "#00aa55"    # Dimmed
+    ERROR        = "#ff3355"    # Red, danger
+    WARNING      = "#ffaa00"    # Warning
+    
+    # ── Text ──
+    TEXT_PRIMARY = "#d8f8ff"    # Main text
+    TEXT_SECONDARY = "#8ffcff"  # Secondary
+    TEXT_TERTIARY = "#3a8a9a"   # Tertiary, labels
+    TEXT_DISABLED = "#1a4a5a"   # Disabled state
+    
+    # ── Spacing (4px grid) ──
+    SPC_XS = 4
+    SPC_SM = 8
+    SPC_MD = 12
+    SPC_LG = 16
+    SPC_XL = 24
+    SPC_2XL = 32
+    
+    # ── Typography ──
+    FONT_MONO = "Courier New"
+    FONT_SIZE_XS = 7
+    FONT_SIZE_SM = 8
+    FONT_SIZE_BASE = 9
+    FONT_SIZE_MD = 10
+    FONT_SIZE_LG = 11
+    FONT_SIZE_XL = 13
+    FONT_SIZE_2XL = 14
+    FONT_SIZE_3XL = 17
+    
+    # ── Radius ──
+    RADIUS_SM = 3
+    RADIUS_MD = 4
+    RADIUS_LG = 6
+
+T = Tokens()
+
+# ── Backwards compatibility aliases ──
+class C:
+    BG        = T.BG_BASE
+    PANEL     = T.BG_L1
+    PANEL2    = T.BG_L2
+    BORDER    = T.BORDER_BASE
+    BORDER_B  = T.BORDER_BOLD
+    BORDER_A  = T.BORDER_DIM
+    PRI       = T.PRIMARY
+    PRI_DIM   = T.PRIMARY_DIM
+    PRI_GHO   = T.PRIMARY_GHOST
+    ACC       = T.ACCENT
+    ACC2      = T.ACCENT_GOLD
+    GREEN     = T.SUCCESS
+    GREEN_D   = T.SUCCESS_DIM
+    RED       = T.ERROR
+    MUTED_C   = T.ERROR
+    TEXT      = T.TEXT_SECONDARY
+    TEXT_DIM  = T.TEXT_TERTIARY
+    TEXT_MED  = T.TEXT_SECONDARY
+    WHITE     = T.TEXT_PRIMARY
+    DARK      = T.BG_L1
+    BAR_BG    = T.BG_BASE
+
+
+def qcol(h: str, a: int = 255) -> QColor:
+    """Helper: create QColor from hex string with optional alpha."""
+    c = QColor(h)
+    c.setAlpha(a)
+    return c
+
+class _SysMetrics:
+    def __init__(self):
+        self.cpu  = 0.0
+        self.mem  = 0.0
+        self.net  = 0.0   
+        self.gpu  = -1.0  
+        self.tmp  = -1.0  
+        self._lock = threading.Lock()
+        self._last_net = psutil.net_io_counters()
+        self._last_net_t = time.time()
+        self._running = True
+        t = threading.Thread(target=self._loop, daemon=True)
+        t.start()
+
+    def _loop(self):
+        while self._running:
+            try:
+                self._update()
+            except Exception:
+                pass
+            time.sleep(1.5)
+
+    def _update(self):
+        cpu = psutil.cpu_percent(interval=None)
+        mem = psutil.virtual_memory().percent
+
+        nc  = psutil.net_io_counters()
+        now = time.time()
+        dt  = now - self._last_net_t
+        if dt > 0:
+            sent = (nc.bytes_sent - self._last_net.bytes_sent) / dt
+            recv = (nc.bytes_recv - self._last_net.bytes_recv) / dt
+            net  = (sent + recv) / (1024 * 1024)
+        else:
+            net = 0.0
+        self._last_net   = nc
+        self._last_net_t = now
+
+        gpu = self._get_gpu()
+
+        tmp = self._get_temp()
+
+        with self._lock:
+            self.cpu = cpu
+            self.mem = mem
+            self.net = net
+            self.gpu = gpu
+            self.tmp = tmp
+
+    def _get_gpu(self) -> float:
+        # NVIDIA
+        try:
+            r = subprocess.run(
+                ["nvidia-smi", "--query-gpu=utilization.gpu",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=2
+            )
+            if r.returncode == 0:
+                vals = [float(v.strip()) for v in r.stdout.strip().split("\n") if v.strip()]
+                if vals:
+                    return sum(vals) / len(vals)
+        except Exception:
+            pass
+
+        # AMD (Linux)
+        if _OS == "Linux":
+            try:
+                r = subprocess.run(
+                    ["rocm-smi", "--showuse", "--csv"],
+                    capture_output=True, text=True, timeout=2
+                )
+                if r.returncode == 0:
+                    for line in r.stdout.strip().split("\n"):
+                        parts = line.split(",")
+                        if len(parts) >= 2:
+                            try:
+                                return float(parts[1].strip().replace("%", ""))
+                            except ValueError:
+                                pass
+            except Exception:
+                pass
+
+            # Intel GPU (Linux)
+            try:
+                r = subprocess.run(
+                    ["intel_gpu_top", "-J", "-s", "500"],
+                    capture_output=True, text=True, timeout=1
+                )
+                if r.returncode == 0 and "Render/3D" in r.stdout:
+                    import re
+                    m = re.search(r'"busy":\s*([\d.]+)', r.stdout)
+                    if m:
+                        return float(m.group(1))
+            except Exception:
+                pass
+
+        # macOS — powermetrics (GPU Engine)
+        if _OS == "Darwin":
+            try:
+                r = subprocess.run(
+                    ["sudo", "-n", "powermetrics", "-n", "1", "-i", "500",
+                     "--samplers", "gpu_power"],
+                    capture_output=True, text=True, timeout=2
+                )
+                if r.returncode == 0 and "GPU" in r.stdout:
+                    import re
+                    m = re.search(r'GPU\s+Active:\s+([\d.]+)%', r.stdout)
+                    if m:
+                        return float(m.group(1))
+            except Exception:
+                pass
+
+        return -1.0
+
+    def _get_temp(self) -> float:
+        try:
+            temps = psutil.sensors_temperatures()
+            candidates = ["coretemp", "k10temp", "cpu_thermal", "acpitz",
+                          "cpu-thermal", "zenpower", "it8688"]
+            for name in candidates:
+                if name in temps:
+                    entries = temps[name]
+                    if entries:
+                        return entries[0].current
+            for entries in temps.values():
+                if entries:
+                    return entries[0].current
+        except Exception:
+            pass
+        if _OS == "Darwin":
+            try:
+                r = subprocess.run(
+                    ["osx-cpu-temp"], capture_output=True, text=True, timeout=2
+                )
+                if r.returncode == 0:
+                    import re
+                    m = re.search(r"([\d.]+)", r.stdout)
+                    if m:
+                        return float(m.group(1))
+            except Exception:
+                pass
+
+        if _OS == "Windows":
+            try:
+                r = subprocess.run(
+                    ["powershell", "-Command",
+                     "(Get-WmiObject MSAcpi_ThermalZoneTemperature -Namespace root/wmi).CurrentTemperature"],
+                    capture_output=True, text=True, timeout=3
+                )
+                if r.returncode == 0 and r.stdout.strip():
+                    raw = float(r.stdout.strip().split("\n")[0])
+                    return (raw / 10.0) - 273.15
+            except Exception:
+                pass
+
+        return -1.0
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            return {
+                "cpu": self.cpu,
+                "mem": self.mem,
+                "net": self.net,
+                "gpu": self.gpu,
+                "tmp": self.tmp,
+            }
+
+
+_metrics = _SysMetrics()
+
+class HudCanvas(QWidget):
+    def __init__(self, face_path: str, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
+        self.setMinimumSize(300, 300)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        self.muted    = False
+        self.speaking = False
+        self.state    = "INITIALISING"
+
+        self._tick       = 0
+        self._scale      = 1.0
+        self._tgt_scale  = 1.0
+        self._halo       = 55.0
+        self._tgt_halo   = 55.0
+        self._last_t     = time.time()
+        self._scan       = 0.0
+        self._scan2      = 180.0
+        self._rings      = [0.0, 120.0, 240.0]
+        self._pulses: list[float] = [0.0, 50.0, 100.0]
+        self._blink      = True
+        self._blink_tick = 0
+        self._particles: list[list[float]] = []
+        self._face_px: QPixmap | None = None
+        self._load_face(face_path)
+
+        self._tmr = QTimer(self)
+        self._tmr.timeout.connect(self._step)
+        self._tmr.start(16)
+
+    def _load_face(self, path: str):
+        try:
+            from PIL import Image, ImageDraw
+            import io
+            img = Image.open(path).convert("RGBA")
+            sz  = min(img.size)
+            img = img.resize((sz, sz), Image.LANCZOS)
+            mk  = Image.new("L", (sz, sz), 0)
+            ImageDraw.Draw(mk).ellipse((2, 2, sz - 2, sz - 2), fill=255)
+            img.putalpha(mk)
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            px = QPixmap(); px.loadFromData(buf.getvalue())
+            self._face_px = px
+        except Exception:
+            self._face_px = None
+
+    def _step(self):
+        self._tick += 1
+        now = time.time()
+        if now - self._last_t > (0.12 if self.speaking else 0.5):
+            if self.speaking:
+                self._tgt_scale = random.uniform(1.06, 1.14)
+                self._tgt_halo  = random.uniform(145, 190)
+            elif self.muted:
+                self._tgt_scale = random.uniform(0.998, 1.002)
+                self._tgt_halo  = random.uniform(15, 28)
+            else:
+                self._tgt_scale = random.uniform(1.001, 1.008)
+                self._tgt_halo  = random.uniform(48, 68)
+            self._last_t = now
+
+        sp = 0.38 if self.speaking else 0.15
+        self._scale += (self._tgt_scale - self._scale) * sp
+        self._halo  += (self._tgt_halo  - self._halo)  * sp
+
+        speeds = [1.3, -0.9, 2.0] if self.speaking else [0.55, -0.35, 0.9]
+        for i, spd in enumerate(speeds):
+            self._rings[i] = (self._rings[i] + spd) % 360
+
+        self._scan  = (self._scan  + (3.0 if self.speaking else 1.3)) % 360
+        self._scan2 = (self._scan2 + (-2.0 if self.speaking else -0.75)) % 360
+
+        fw  = min(self.width(), self.height())
+        lim = fw * 0.74
+        spd = 4.2 if self.speaking else 2.0
+        self._pulses = [r + spd for r in self._pulses if r + spd < lim]
+        if len(self._pulses) < 3 and random.random() < (0.07 if self.speaking else 0.025):
+            self._pulses.append(0.0)
+
+        if self.speaking and random.random() < 0.28:
+            cx, cy = self.width() / 2, self.height() / 2
+            ang = random.uniform(0, 2 * math.pi)
+            r_s = fw * 0.28
+            self._particles.append([
+                cx + math.cos(ang) * r_s, cy + math.sin(ang) * r_s,
+                math.cos(ang) * random.uniform(0.9, 2.4),
+                math.sin(ang) * random.uniform(0.9, 2.4) - 0.4, 1.0,
+            ])
+        self._particles = [
+            [p[0]+p[2], p[1]+p[3], p[2]*0.97, p[3]*0.97, p[4]-0.028]
+            for p in self._particles if p[4] > 0
+        ]
+
+        self._blink_tick += 1
+        if self._blink_tick >= 38:
+            self._blink = not self._blink
+            self._blink_tick = 0
+        self.update()
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.fillRect(self.rect(), qcol(T.BG_BASE))
+
+        W, H = self.width(), self.height()
+        cx, cy = W / 2, H / 2
+        fw = min(W, H)
+
+        # grid dots (very subtle)
+        p.setPen(QPen(qcol(T.PRIMARY_GHOST, 40), 1))
+        for x in range(0, W, 48):
+            for y in range(0, H, 48):
+                p.drawPoint(x, y)
+
+        r_face = fw * 0.31
+
+        # halo glow
+        for i in range(10):
+            r   = r_face * (1.8 - i * 0.08)
+            frc = 1.0 - i / 10
+            a   = max(0, min(255, int(self._halo * 0.085 * frc)))
+            col = qcol(T.ERROR if self.muted else T.PRIMARY, a)
+            p.setPen(QPen(col, 1.5)); p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawEllipse(QRectF(cx - r, cy - r, r * 2, r * 2))
+
+        # pulse rings
+        for pr in self._pulses:
+            a   = max(0, int(230 * (1.0 - pr / (fw * 0.74))))
+            col = qcol(T.ERROR if self.muted else T.PRIMARY, a)
+            p.setPen(QPen(col, 1.5)); p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawEllipse(QRectF(cx - pr, cy - pr, pr * 2, pr * 2))
+
+        # spinning arc rings
+        for idx, (r_frac, w_r, arc_l, gap) in enumerate(
+            [(0.48, 3, 115, 78), (0.40, 2, 78, 55), (0.32, 1, 56, 40)]
+        ):
+            ring_r = fw * r_frac
+            base   = self._rings[idx]
+            a_val  = max(0, min(255, int(self._halo * (1.0 - idx * 0.18))))
+            col    = qcol(T.ERROR if self.muted else T.PRIMARY, a_val)
+            p.setPen(QPen(col, w_r)); p.setBrush(Qt.BrushStyle.NoBrush)
+            angle = base
+            rect  = QRectF(cx - ring_r, cy - ring_r, ring_r * 2, ring_r * 2)
+            while angle < base + 360:
+                p.drawArc(rect, int(angle * 16), int(arc_l * 16))
+                angle += arc_l + gap
+
+        # scanners
+        sr = fw * 0.50
+        sa = min(255, int(self._halo * 1.5))
+        ex = 75 if self.speaking else 44
+        p.setPen(QPen(qcol(T.ERROR if self.muted else T.PRIMARY, sa), 2.5))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        srect = QRectF(cx - sr, cy - sr, sr * 2, sr * 2)
+        p.drawArc(srect, int(self._scan * 16), int(ex * 16))
+        p.setPen(QPen(qcol(T.ACCENT, sa // 2), 1.5))
+        p.drawArc(srect, int(self._scan2 * 16), int(ex * 16))
+
+        # tick marks
+        t_out, t_in = fw * 0.497, fw * 0.474
+        p.setPen(QPen(qcol(T.PRIMARY, 140), 1))
+        for deg in range(0, 360, 10):
+            rad = math.radians(deg)
+            inn = t_in if deg % 30 == 0 else t_in + 6
+            p.drawLine(
+                QPointF(cx + t_out * math.cos(rad), cy - t_out * math.sin(rad)),
+                QPointF(cx + inn  * math.cos(rad), cy - inn  * math.sin(rad)),
+            )
+
+        # crosshair
+        ch_r, gap_h = fw * 0.51, fw * 0.16
+        p.setPen(QPen(qcol(T.PRIMARY, int(self._halo * 0.5)), 1))
+        p.drawLine(QPointF(cx - ch_r, cy), QPointF(cx - gap_h, cy))
+        p.drawLine(QPointF(cx + gap_h, cy), QPointF(cx + ch_r, cy))
+        p.drawLine(QPointF(cx, cy - ch_r), QPointF(cx, cy - gap_h))
+        p.drawLine(QPointF(cx, cy + gap_h), QPointF(cx, cy + ch_r))
+
+        # corner brackets
+        bl = 24
+        bc = qcol(T.PRIMARY, 210)
+        hl, hr = cx - fw // 2, cx + fw // 2
+        ht, hb = cy - fw // 2, cy + fw // 2
+        p.setPen(QPen(bc, 2))
+        for bx, by, dx, dy in [(hl,ht,1,1),(hr,ht,-1,1),(hl,hb,1,-1),(hr,hb,-1,-1)]:
+            p.drawLine(QPointF(bx, by), QPointF(bx + dx * bl, by))
+            p.drawLine(QPointF(bx, by), QPointF(bx, by + dy * bl))
+
+        # face
+        if self._face_px:
+            fsz    = int(fw * 0.62 * self._scale)
+            scaled = self._face_px.scaled(
+                fsz, fsz,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            p.drawPixmap(int(cx - fsz / 2), int(cy - fsz / 2), scaled)
+        else:
+            orb_r = int(fw * 0.27 * self._scale)
+            oc    = (200, 0, 50) if self.muted else (0, 60, 110)
+            for i in range(8, 0, -1):
+                r2  = int(orb_r * i / 8)
+                frc = i / 8
+                a   = max(0, min(255, int(self._halo * 1.1 * frc)))
+                p.setBrush(QBrush(QColor(int(oc[0]*frc), int(oc[1]*frc), int(oc[2]*frc), a)))
+                p.setPen(Qt.PenStyle.NoPen)
+                p.drawEllipse(QRectF(cx - r2, cy - r2, r2 * 2, r2 * 2))
+            p.setPen(QPen(qcol(T.PRIMARY, min(255, int(self._halo * 2))), 1))
+            p.setFont(QFont(T.FONT_MONO, 13, QFont.Weight.Bold))
+            p.drawText(QRectF(cx - 80, cy - 14, 160, 28),
+                       Qt.AlignmentFlag.AlignCenter, "S L O N")
+
+        # particles
+        for pt in self._particles:
+            a = max(0, min(255, int(pt[4] * 255)))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(qcol(T.PRIMARY, a)))
+            p.drawEllipse(QPointF(pt[0], pt[1]), 2.5, 2.5)
+
+        # status text
+        sy = cy + fw * 0.40
+        if self.muted:
+            txt, col = "⊘  MUTED",     qcol(T.ERROR)
+        elif self.speaking:
+            txt, col = "●  SPEAKING",  qcol(T.ACCENT)
+        elif self.state == "THINKING":
+            sym = "◈" if self._blink else "◇"
+            txt, col = f"{sym}  THINKING",   qcol(T.ACCENT_GOLD)
+        elif self.state == "PROCESSING":
+            sym = "▷" if self._blink else "▶"
+            txt, col = f"{sym}  PROCESSING", qcol(T.ACCENT_GOLD)
+        elif self.state == "LISTENING":
+            sym = "●" if self._blink else "○"
+            txt, col = f"{sym}  LISTENING",  qcol(T.SUCCESS)
+        else:
+            sym = "●" if self._blink else "○"
+            txt, col = f"{sym}  {self.state}", qcol(T.PRIMARY)
+
+        p.setPen(QPen(col, 1))
+        p.setFont(QFont(T.FONT_MONO, 11, QFont.Weight.Bold))
+        p.drawText(QRectF(0, sy, W, 26), Qt.AlignmentFlag.AlignCenter, txt)
+
+        # waveform
+        wy = sy + 30
+        N, bw = 36, 8
+        wx0 = (W - N * bw) / 2
+        for i in range(N):
+            if self.muted:
+                hgt, cl = 2, qcol(T.ERROR)
+            elif self.speaking:
+                hgt = random.randint(3, 20)
+                cl  = qcol(T.PRIMARY) if hgt > 12 else qcol(T.PRIMARY_DIM)
+            else:
+                hgt = int(3 + 2 * math.sin(self._tick * 0.09 + i * 0.6))
+                cl  = qcol(T.BORDER_BOLD)
+            p.fillRect(QRectF(wx0 + i * bw, wy + 20 - hgt, bw - 1, hgt), cl)
+
+class MetricBar(QWidget):
+    """Real-time metric bar with label, value, and visual indicator."""
+    
+    def __init__(self, label: str, color: str = T.PRIMARY, parent=None):
+        super().__init__(parent)
+        self._label = label
+        self._color = color
+        self._value = 0.0       # 0–100
+        self._text  = "--"
+        self.setFixedHeight(40)
+        self.setMinimumWidth(80)
+
+    def set_value(self, pct: float, text: str):
+        self._value = max(0.0, min(100.0, pct))
+        self._text  = text
+        self.update()
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        W, H = self.width(), self.height()
+
+        # Background with elevated appearance
+        p.setBrush(QBrush(qcol(T.BG_L2)))
+        p.setPen(QPen(qcol(T.BORDER_DIM, 120), 1))
+        p.drawRoundedRect(QRectF(0.5, 0.5, W - 1, H - 1), T.RADIUS_SM, T.RADIUS_SM)
+
+        # Inset border for depth
+        p.setPen(QPen(qcol(T.BORDER_BASE, 80), 1))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(QRectF(1.5, 1.5, W - 3, H - 3), T.RADIUS_SM, T.RADIUS_SM)
+
+        bar_h   = 5
+        bar_y   = H - bar_h - 6
+        bar_w   = W - 14
+        bar_x   = 7
+        fill_w  = int(bar_w * self._value / 100)
+
+        # Background bar
+        p.setBrush(QBrush(qcol(T.BG_L1)))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawRoundedRect(QRectF(bar_x, bar_y, bar_w, bar_h), 2, 2)
+
+        # Fill bar with color coding
+        if self._value > 85:
+            bar_col = qcol(T.ERROR)
+        elif self._value > 65:
+            bar_col = qcol(T.ACCENT)
+        else:
+            bar_col = qcol(self._color)
+
+        if fill_w > 0:
+            p.setBrush(QBrush(bar_col))
+            p.drawRoundedRect(QRectF(bar_x, bar_y, fill_w, bar_h), 2, 2)
+
+        # Label with improved typography
+        p.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_XS, QFont.Weight.Bold))
+        p.setPen(QPen(qcol(T.TEXT_TERTIARY), 1))
+        p.drawText(QRectF(8, 4, 50, 14), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, self._label)
+
+        # Value (text) with proper styling
+        p.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_XL, QFont.Weight.Bold))
+        p.setPen(QPen(bar_col if self._text != "--" else qcol(T.TEXT_TERTIARY), 1))
+        p.drawText(QRectF(0, 4, W - 8, 16), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, self._text)
+
+class LogWidget(QTextEdit):
+    """Activity log with typing animation and color-coded output."""
+    _sig = pyqtSignal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setReadOnly(True)
+        self.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_BASE))
+        self.setStyleSheet(f"""
+            QTextEdit {{
+                background: {T.BG_L1};
+                color: {T.TEXT_SECONDARY};
+                border: 1px solid {T.BORDER_BASE};
+                border-radius: {T.RADIUS_MD}px;
+                padding: {T.SPC_SM}px;
+                selection-background-color: {T.PRIMARY_GHOST};
+            }}
+            QScrollBar:vertical {{
+                background: {T.BG_BASE};
+                width: 8px;
+                border: none;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {T.BORDER_BOLD};
+                border-radius: 4px;
+                min-height: 20px;
+            }}
+        """)
+        self._queue: list[str] = []
+        self._typing  = False
+        self._text    = ""
+        self._pos     = 0
+        self._tag     = "sys"
+        self._tmr = QTimer(self)
+        self._tmr.timeout.connect(self._step)
+        self._sig.connect(self._enqueue)
+
+    def append_log(self, text: str):
+        self._sig.emit(text)
+
+    def _enqueue(self, text: str):
+        self._queue.append(text)
+        if not self._typing:
+            self._next()
+
+    def _next(self):
+        if not self._queue:
+            self._typing = False
+            return
+        self._typing = True
+        self._text   = self._queue.pop(0)
+        self._pos    = 0
+        tl = self._text.lower()
+        if   tl.startswith("you:"):    self._tag = "you"
+        elif tl.startswith("slon:") or tl.startswith("jarvis:"): self._tag = "ai"
+        elif tl.startswith("file:"):   self._tag = "file"
+        elif "err" in tl:              self._tag = "err"
+        else:                          self._tag = "sys"
+        self._tmr.start(6)
+
+    def _step(self):
+        if self._pos < len(self._text):
+            ch  = self._text[self._pos]
+            cur = self.textCursor()
+            fmt = cur.charFormat()
+            col = {
+                "you":  qcol(T.TEXT_PRIMARY),
+                "ai":   qcol(T.PRIMARY),
+                "err":  qcol(T.ERROR),
+                "file": qcol(T.SUCCESS),
+                "sys":  qcol(T.ACCENT_GOLD),
+            }.get(self._tag, qcol(T.TEXT_SECONDARY))
+            fmt.setForeground(QBrush(col))
+            cur.movePosition(cur.MoveOperation.End)
+            cur.insertText(ch, fmt)
+            self.setTextCursor(cur)
+            self.ensureCursorVisible()
+            self._pos += 1
+        else:
+            self._tmr.stop()
+            cur = self.textCursor()
+            cur.movePosition(cur.MoveOperation.End)
+            cur.insertText("\n")
+            self.setTextCursor(cur)
+            self.ensureCursorVisible()
+            QTimer.singleShot(20, self._next)
+
+_FILE_ICONS = {
+    "image":   ("🖼", T.PRIMARY), "video":   ("🎬", T.ACCENT),
+    "audio":   ("🎵", T.ACCENT_GOLD), "pdf":     ("📄", T.ERROR),
+    "word":    ("📝", T.PRIMARY), "excel":   ("📊", T.SUCCESS),
+    "code":    ("💻", T.ACCENT_GOLD), "archive": ("📦", T.ACCENT),
+    "pptx":    ("📊", T.ACCENT), "text":    ("📃", T.TEXT_TERTIARY),
+    "data":    ("🔧", T.PRIMARY), "unknown": ("📎", T.TEXT_TERTIARY),
+}
+_EXT_TO_CAT = {
+    **dict.fromkeys(["jpg","jpeg","png","gif","webp","bmp","tiff","svg","ico"], "image"),
+    **dict.fromkeys(["mp4","avi","mov","mkv","wmv","flv","webm","m4v"],         "video"),
+    **dict.fromkeys(["mp3","wav","ogg","m4a","aac","flac","wma","opus"],        "audio"),
+    **dict.fromkeys(["pdf"],                                                     "pdf"),
+    **dict.fromkeys(["doc","docx"],                                              "word"),
+    **dict.fromkeys(["xls","xlsx","ods"],                                        "excel"),
+    **dict.fromkeys(["ppt","pptx"],                                              "pptx"),
+    **dict.fromkeys(["py","js","ts","jsx","tsx","html","css","java","c","cpp",
+                     "cs","go","rs","rb","php","swift","kt","sh","sql","lua"],   "code"),
+    **dict.fromkeys(["zip","rar","tar","gz","7z","bz2","xz"],                   "archive"),
+    **dict.fromkeys(["txt","md","rst","log"],                                    "text"),
+    **dict.fromkeys(["csv","tsv","json","xml"],                                  "data"),
+}
+
+def _file_category(path: Path) -> str:
+    return _EXT_TO_CAT.get(path.suffix.lower().lstrip("."), "unknown")
+
+def _fmt_size(size: int) -> str:
+    if   size < 1024:    return f"{size} B"
+    elif size < 1024**2: return f"{size/1024:.1f} KB"
+    elif size < 1024**3: return f"{size/1024**2:.1f} MB"
+    else:                return f"{size/1024**3:.1f} GB"
+
+
+class FileDropZone(QWidget):
+    """Drag-and-drop file upload zone with animated border."""
+    file_selected = pyqtSignal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFixedHeight(110)
+        self._current_file: str | None = None
+
+        self._hovering  = False
+        self._drag_over = False
+        self._dash_offset = 0.0
+        self._anim_tmr = QTimer(self)
+        self._anim_tmr.timeout.connect(self._animate)
+        self._anim_tmr.start(40)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self._canvas = _DropCanvas(self)
+        layout.addWidget(self._canvas)
+
+    def _animate(self):
+        self._dash_offset = (self._dash_offset + 0.8) % 20
+        self._canvas.update()
+
+    def dragEnterEvent(self, e: QDragEnterEvent):
+        if e.mimeData().hasUrls():
+            e.acceptProposedAction()
+            self._drag_over = True; self._canvas.update()
+
+    def dragLeaveEvent(self, e):
+        self._drag_over = False; self._canvas.update()
+
+    def dropEvent(self, e: QDropEvent):
+        self._drag_over = False
+        urls = e.mimeData().urls()
+        if urls:
+            path = urls[0].toLocalFile()
+            if Path(path).is_file():
+                self._set_file(path)
+        self._canvas.update()
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self._browse()
+
+    def enterEvent(self, e):
+        self._hovering = True; self._canvas.update()
+
+    def leaveEvent(self, e):
+        self._hovering = False; self._canvas.update()
+
+    def current_file(self) -> str | None:
+        return self._current_file
+
+    def clear_file(self):
+        self._current_file = None; self._canvas.update()
+
+    def _browse(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Выберите файл для Slon", str(Path.home()),
+            "All Files (*.*);;"
+            "Images (*.jpg *.jpeg *.png *.gif *.webp *.bmp *.svg);;"
+            "Documents (*.pdf *.docx *.txt *.md *.pptx);;"
+            "Data (*.csv *.xlsx *.json *.xml);;"
+            "Code (*.py *.js *.ts *.html *.css *.java *.cpp *.go);;"
+            "Audio (*.mp3 *.wav *.ogg *.m4a *.aac *.flac);;"
+            "Video (*.mp4 *.avi *.mov *.mkv *.wmv *.webm);;"
+            "Archives (*.zip *.rar *.tar *.gz *.7z)",
+        )
+        if path:
+            self._set_file(path)
+
+    def _set_file(self, path: str):
+        self._current_file = path
+        self._canvas.update()
+        self.file_selected.emit(path)
+
+
+class _DropCanvas(QWidget):
+    """Animated drop zone canvas."""
+    
+    def __init__(self, zone: FileDropZone):
+        super().__init__(zone)
+        self._z = zone
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        z    = self._z
+        W, H = self.width(), self.height()
+        pad  = 6
+        rect = QRectF(pad, pad, W - pad * 2, H - pad * 2)
+
+        # Background (transitions with state)
+        if z._drag_over:
+            bg_col = qcol(T.BG_L2)
+        elif z._hovering:
+            bg_col = qcol(T.BG_L2)
+        else:
+            bg_col = qcol(T.BG_L1)
+
+        p.setBrush(QBrush(bg_col))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawRoundedRect(rect, T.RADIUS_MD, T.RADIUS_MD)
+
+        # Border (animated dash)
+        if z._current_file:
+            border_col = qcol(T.SUCCESS, 220)
+        elif z._drag_over:
+            border_col = qcol(T.PRIMARY, 240)
+        elif z._hovering:
+            border_col = qcol(T.BORDER_BOLD, 200)
+        else:
+            border_col = qcol(T.BORDER_BASE, 160)
+
+        pen = QPen(border_col, 1.5, Qt.PenStyle.DashLine)
+        pen.setDashOffset(z._dash_offset)
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(rect, T.RADIUS_MD, T.RADIUS_MD)
+
+        if z._current_file:
+            self._paint_file(p, W, H)
+        elif z._drag_over:
+            self._paint_drag_over(p, W, H)
+        else:
+            self._paint_idle(p, W, H, z._hovering)
+
+    def _paint_idle(self, p, W, H, hover):
+        cx, cy = W / 2, H / 2
+        col = qcol(T.PRIMARY_DIM if not hover else T.PRIMARY)
+        p.setPen(QPen(col, 2))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawLine(QPointF(cx, cy - 14), QPointF(cx, cy + 4))
+        p.drawLine(QPointF(cx - 8, cy - 6), QPointF(cx, cy - 14))
+        p.drawLine(QPointF(cx + 8, cy - 6), QPointF(cx, cy - 14))
+        p.drawLine(QPointF(cx - 14, cy + 4), QPointF(cx + 14, cy + 4))
+        
+        p.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_SM))
+        p.setPen(QPen(qcol(T.PRIMARY_DIM if not hover else T.TEXT_SECONDARY), 1))
+        p.drawText(QRectF(0, cy + 8, W, 16), Qt.AlignmentFlag.AlignCenter,
+                   t("filedrop.drop_select"))
+        p.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_XS))
+        p.setPen(QPen(qcol(T.TEXT_DISABLED), 1))
+        p.drawText(QRectF(0, cy + 24, W, 14), Qt.AlignmentFlag.AlignCenter,
+                   "Images · Video · Audio · PDF · Docs · Code · Data")
+
+    def _paint_drag_over(self, p, W, H):
+        cx, cy = W / 2, H / 2
+        p.setFont(QFont(T.FONT_MONO, 20))
+        p.setPen(QPen(qcol(T.PRIMARY), 1))
+        p.drawText(QRectF(0, cy - 24, W, 32), Qt.AlignmentFlag.AlignCenter, "⬇")
+        p.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_SM, QFont.Weight.Bold))
+        p.setPen(QPen(qcol(T.PRIMARY), 1))
+        p.drawText(QRectF(0, cy + 12, W, 16), Qt.AlignmentFlag.AlignCenter, t("filedrop.release_to_upload"))
+
+    def _paint_file(self, p, W, H):
+        path = Path(self._z._current_file)
+        cat  = _file_category(path)
+        icon, icon_col = _FILE_ICONS.get(cat, _FILE_ICONS["unknown"])
+        size_str = _fmt_size(path.stat().st_size)
+        ext_str  = path.suffix.upper().lstrip(".") or "FILE"
+
+        block_x, block_w = 10, 60
+        p.setFont(QFont("Segoe UI Emoji", 22) if _OS == "Windows" else QFont("Arial", 22))
+        p.setPen(QPen(qcol(icon_col), 1))
+        p.drawText(QRectF(block_x, 0, block_w, H), Qt.AlignmentFlag.AlignCenter, icon)
+
+        tx = block_x + block_w + 6
+        tw = W - tx - 38
+
+        p.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_SM, QFont.Weight.Bold))
+        p.setPen(QPen(qcol(T.TEXT_PRIMARY), 1))
+        name = path.name if len(path.name) <= 34 else path.name[:31] + "..."
+        p.drawText(QRectF(tx, H * 0.18, tw, 16),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, name)
+
+        p.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_XS))
+        p.setPen(QPen(qcol(T.TEXT_TERTIARY), 1))
+        p.drawText(QRectF(tx, H * 0.18 + 18, tw, 14),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   f"{ext_str}  ·  {size_str}")
+
+        p.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_XS - 1))
+        p.setPen(QPen(qcol(T.TEXT_DISABLED), 1))
+        par = str(path.parent)
+        if len(par) > 42: par = "…" + par[-41:]
+        p.drawText(QRectF(tx, H * 0.18 + 34, tw, 12),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, par)
+
+        p.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_XL, QFont.Weight.Bold))
+        p.setPen(QPen(qcol(T.ERROR, 180), 1))
+        p.drawText(QRectF(W - 34, 0, 28, H), Qt.AlignmentFlag.AlignCenter, "✕")
+
+    def mousePressEvent(self, e):
+        z = self._z
+        if z._current_file and e.pos().x() > self.width() - 34:
+            z.clear_file()
+        else:
+            z.mousePressEvent(e)
+
+
+class MainWindow(QMainWindow):
+    _log_sig       = pyqtSignal(str)
+    _state_sig     = pyqtSignal(str)
+    _stt_text_sig  = pyqtSignal(str)
+    _provider_sig  = pyqtSignal(str)  # emitted when provider changes
+
+    def __init__(self, face_path: str):
+        super().__init__()
+        self.setWindowTitle("S L O N")
+        self.setMinimumSize(_MIN_W, _MIN_H)
+        self.resize(_DEFAULT_W, _DEFAULT_H)
+
+        screen = QApplication.primaryScreen().availableGeometry()
+        self.move(
+            (screen.width()  - _DEFAULT_W) // 2,
+            (screen.height() - _DEFAULT_H) // 2,
+        )
+
+        self.on_text_command  = None
+        self._muted           = False
+        self._selected_provider = DEFAULT_PROVIDER_ID  # for UI display & control_plane
+        self._current_file: str | None = None
+        self._local_tts_provider = None
+        self._local_tts_ready = False
+        self._local_tts_enabled = False
+        self._local_tts_message = "Локальный TTS не инициализирован"
+        self._local_stt_provider = None
+        self._local_stt_mic = None
+        self._local_stt_ready = False
+        self._local_stt_message = "Локальный STT не инициализирован"
+        self._desktop_listener = None
+        self._gateway = None
+        self._desktop_tls = False
+        self._runtime_stack = None
+        self._wake_word_listener = None
+
+        central = QWidget()
+        central.setStyleSheet(f"background: {T.BG_BASE};")
+        self.setCentralWidget(central)
+
+        root = QVBoxLayout(central)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        root.addWidget(self._build_header())
+
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+
+        self._left_panel = self._build_left_panel()
+        body.addWidget(self._left_panel, stretch=0)
+
+        self.hud = HudCanvas(face_path)
+        self.hud.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        body.addWidget(self.hud, stretch=5)
+
+        self._right_panel = self._build_right_panel()
+        body.addWidget(self._right_panel, stretch=0)
+
+        root.addLayout(body, stretch=1)
+        root.addWidget(self._build_footer())
+
+        self._clock_tmr = QTimer(self)
+        self._clock_tmr.timeout.connect(self._tick_clock)
+        self._clock_tmr.start(1000)
+        self._tick_clock()
+        self._gateway_lan_last_state: str | None = None
+
+        # Metrik güncelleme timer'ı
+        self._metric_tmr = QTimer(self)
+        self._metric_tmr.timeout.connect(self._update_metrics)
+        self._metric_tmr.start(2000)
+        self._update_metrics()
+
+        self._log_sig.connect(self._apply_log)
+        self._state_sig.connect(self._apply_state)
+        self._stt_text_sig.connect(self._apply_stt_text)
+
+        self._init_local_tts()
+        self._init_local_stt()
+        self._init_runtime_bridge()
+        self._init_control_plane()
+
+        self._overlay: QWidget | None = None
+        self._ready = self._check_config()
+        if not self._ready:
+            self._show_setup()
+
+        sc_mute = QShortcut(QKeySequence("F4"), self)
+        sc_mute.activated.connect(self._toggle_mute)
+        sc_full = QShortcut(QKeySequence("F11"), self)
+        sc_full.activated.connect(self._toggle_fullscreen)
+
+
+    def closeEvent(self, event):
+        try:
+            if self._wake_word_listener is not None:
+                self._wake_word_listener.stop()
+                self._wake_word_listener = None
+            if self._desktop_listener is not None:
+                self._desktop_listener.stop()
+                self._desktop_listener = None
+            if self._gateway is not None:
+                self._gateway.close()
+                self._gateway = None
+        except Exception:
+            pass
+        super().closeEvent(event)
+
+    def _toggle_fullscreen(self):
+        if self.isFullScreen():
+            self.showNormal()
+        else:
+            self.showFullScreen()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._overlay and self._overlay.isVisible():
+            ow, oh = 460, 390
+            cw = self.centralWidget()
+            self._overlay.setGeometry(
+                (cw.width()  - ow) // 2,
+                (cw.height() - oh) // 2,
+                ow, oh,
+            )
+
+    def _update_metrics(self):
+        snap = _metrics.snapshot()
+
+        # CPU
+        cpu = snap["cpu"]
+        self._bar_cpu.set_value(cpu, f"{cpu:.0f}%")
+
+        # MEM
+        mem = snap["mem"]
+        self._bar_mem.set_value(mem, f"{mem:.0f}%")
+
+        # NET
+        net = snap["net"]
+        if net < 1.0:
+            net_str = f"{net*1024:.0f}KB/s"
+        else:
+            net_str = f"{net:.1f}MB/s"
+        net_pct = min(100, net * 10)  # 10 MB/s = %100
+        self._bar_net.set_value(net_pct, net_str)
+
+        # GPU
+        gpu = snap["gpu"]
+        if gpu >= 0:
+            self._bar_gpu.set_value(gpu, f"{gpu:.0f}%")
+        else:
+            self._bar_gpu.set_value(0, "N/A")
+
+        # TMP
+        tmp = snap["tmp"]
+        if tmp >= 0:
+            tmp_pct = min(100, (tmp / 100) * 100)
+            self._bar_tmp.set_value(tmp_pct, f"{tmp:.0f}°C")
+        else:
+            self._bar_tmp.set_value(0, "N/A")
+
+        try:
+            boot_t  = psutil.boot_time()
+            elapsed = time.time() - boot_t
+            h = int(elapsed // 3600)
+            m = int((elapsed % 3600) // 60)
+            self._uptime_lbl.setText(t("ui.uptime", h=h, m=m))
+        except Exception:
+            self._uptime_lbl.setText(t("ui.uptime_none"))
+
+        try:
+            proc_count = len(psutil.pids())
+            self._proc_lbl.setText(t("ui.proc_count", n=proc_count))
+        except Exception:
+            self._proc_lbl.setText(t("ui.proc_none"))
+
+        plane = getattr(self, "_control_plane", None)
+        if plane is not None:
+            try:
+                plane.update_metrics(
+                    cpu_percent=float(cpu),
+                    memory_percent=float(mem),
+                    network_m_bps=float(net),
+                    gpu_percent=float(gpu) if gpu >= 0 else None,
+                    temperature_celsius=float(tmp) if tmp >= 0 else None,
+                    uptime_seconds=max(0.0, time.time() - psutil.boot_time()),
+                    process_count=len(psutil.pids()),
+                    os_name=_OS,
+                )
+            except Exception:
+                pass
+        if read_gateway_status is not None:
+            status = read_gateway_status(BASE_DIR / "memory" / "slon_gateway.sqlite3")
+            state = str(status.get("state", "unavailable")).upper()
+            if state != self._gateway_lan_last_state:
+                self._gateway_lan_last_state = state
+                host = status.get("bind_host")
+                tls = bool(status.get("tls_active", False))
+                details = f" · {host} · TLS" if host and tls else ""
+                self._log_sig.emit(f"SYS: Gateway LAN {state}{details}")
+            if plane is not None:
+                plane.update_state(
+                    gateway_lan_state=state,
+                    gateway_lan_host=status.get("bind_host"),
+                    gateway_lan_tls=bool(status.get("tls_active", False)),
+                    gateway_connected_devices=int(status.get("connected_devices", 0)),
+                )
+
+
+    def _build_header(self) -> QWidget:
+        w = QWidget()
+        w.setFixedHeight(54)
+        w.setStyleSheet(f"background: {T.BG_L1}; border-bottom: 1px solid {T.BORDER_BOLD};")
+        lay = QHBoxLayout(w)
+        lay.setContentsMargins(T.SPC_LG, 0, T.SPC_LG, 0)
+
+        def _badge(txt, color=T.TEXT_SECONDARY):
+            l = QLabel(txt)
+            l.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_SM))
+            l.setStyleSheet(f"color: {color}; background: transparent;")
+            return l
+
+        lay.addWidget(_badge("Slon", T.PRIMARY_DIM))
+        lay.addStretch()
+
+        mid = QVBoxLayout(); mid.setSpacing(T.SPC_XS)
+        title = QLabel("S L O N")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_3XL, QFont.Weight.Bold))
+        title.setStyleSheet(f"color: {T.PRIMARY}; background: transparent;")
+        mid.addWidget(title)
+        sub = QLabel("Just A Rather Very Intelligent System")
+        sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sub.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_XS))
+        sub.setStyleSheet(f"color: {T.PRIMARY_DIM}; background: transparent;")
+        mid.addWidget(sub)
+        lay.addLayout(mid)
+        lay.addStretch()
+
+        right_col = QVBoxLayout(); right_col.setSpacing(T.SPC_XS)
+        self._clock_lbl = QLabel("00:00:00")
+        self._clock_lbl.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_2XL, QFont.Weight.Bold))
+        self._clock_lbl.setStyleSheet(f"color: {T.PRIMARY}; background: transparent;")
+        self._clock_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
+        right_col.addWidget(self._clock_lbl)
+        self._date_lbl = QLabel("")
+        self._date_lbl.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_XS))
+        self._date_lbl.setStyleSheet(f"color: {T.TEXT_TERTIARY}; background: transparent;")
+        self._date_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
+        right_col.addWidget(self._date_lbl)
+        lay.addLayout(right_col)
+        return w
+
+    def _tick_clock(self):
+        self._clock_lbl.setText(time.strftime("%H:%M:%S"))
+        self._date_lbl.setText(time.strftime("%a %d %b %Y"))
+
+    def _build_left_panel(self) -> QWidget:
+        w = QWidget()
+        w.setFixedWidth(_LEFT_W)
+        w.setStyleSheet(f"background: {T.BG_L1}; border-right: 1px solid {T.BORDER_BASE};")
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(T.SPC_SM, T.SPC_LG, T.SPC_SM, T.SPC_LG)
+        lay.setSpacing(T.SPC_MD)
+
+        hdr = QLabel("◈ SYS MONITOR")
+        hdr.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_XS, QFont.Weight.Bold))
+        hdr.setStyleSheet(f"color: {T.PRIMARY}; background: transparent; "
+                          f"border-bottom: 1px solid {T.BORDER_BASE}; padding-bottom: {T.SPC_XS}px;")
+        lay.addWidget(hdr)
+        lay.addSpacing(T.SPC_XS)
+
+        self._bar_cpu = MetricBar("CPU", T.PRIMARY)
+        self._bar_mem = MetricBar("MEM", T.ACCENT_GOLD)
+        self._bar_net = MetricBar("NET", T.SUCCESS)
+        self._bar_gpu = MetricBar("GPU", T.ACCENT)
+        self._bar_tmp = MetricBar("TMP", T.ERROR)
+
+        for bar in [self._bar_cpu, self._bar_mem, self._bar_net,
+                    self._bar_gpu, self._bar_tmp]:
+            lay.addWidget(bar)
+
+        lay.addSpacing(T.SPC_MD)
+
+        info_panel = QWidget()
+        info_panel.setStyleSheet(
+            f"background: {T.BG_L2}; border: 1px solid {T.BORDER_DIM}; border-radius: {T.RADIUS_MD}px;"
+        )
+        ip_lay = QVBoxLayout(info_panel)
+        ip_lay.setContentsMargins(T.SPC_SM, T.SPC_SM, T.SPC_SM, T.SPC_SM)
+        ip_lay.setSpacing(T.SPC_XS)
+
+        self._uptime_lbl = QLabel("UP  --:--")
+        self._uptime_lbl.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_SM, QFont.Weight.Bold))
+        self._uptime_lbl.setStyleSheet(f"color: {T.SUCCESS}; background: transparent; border: none;")
+        ip_lay.addWidget(self._uptime_lbl)
+
+        self._proc_lbl = QLabel("PROC  --")
+        self._proc_lbl.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_SM))
+        self._proc_lbl.setStyleSheet(f"color: {T.TEXT_SECONDARY}; background: transparent; border: none;")
+        ip_lay.addWidget(self._proc_lbl)
+
+        os_name = {"Windows": "WIN", "Darwin": "macOS", "Linux": "LINUX"}.get(_OS, _OS.upper())
+        os_lbl = QLabel(f"OS  {os_name}")
+        os_lbl.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_SM))
+        os_lbl.setStyleSheet(f"color: {T.ACCENT_GOLD}; background: transparent; border: none;")
+        ip_lay.addWidget(os_lbl)
+
+        lay.addWidget(info_panel)
+        lay.addStretch()
+
+        for txt, col in [
+            ("AI CORE\nACTIVE",     T.SUCCESS),
+            ("SEC\nCLEARED",        T.PRIMARY),
+            ("PROTOCOL\nXXXVIII",   T.TEXT_TERTIARY),
+        ]:
+            lbl = QLabel(txt)
+            lbl.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_XS, QFont.Weight.Bold))
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl.setStyleSheet(
+                f"color: {col}; background: {T.BG_L2};"
+                f"border: 1px solid {T.BORDER_DIM}; border-radius: {T.RADIUS_SM}px; padding: {T.SPC_XS}px;"
+            )
+            lay.addWidget(lbl)
+
+        return w
+
+    def _build_settings_section(self) -> QWidget:
+        """Provider / model / base URL / API key controls."""
+        from config.schema import PROVIDER_IDS, DEFAULT_PROVIDER_ID
+
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(T.SPC_SM)
+
+        hdr = QLabel("\u2699 PROVISION")
+        hdr.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_XS, QFont.Weight.Bold))
+        hdr.setStyleSheet(f"color: {T.PRIMARY}; background: transparent; "
+                          f"border-bottom: 1px solid {T.BORDER_BASE}; padding-bottom: {T.SPC_XS}px;")
+        lay.addWidget(hdr)
+
+        # \u2500 Provider selector \u2500
+        self._provider_cbox = QComboBox()
+        self._provider_cbox.addItems(sorted(PROVIDER_IDS))
+        self._provider_cbox.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_SM))
+        self._provider_cbox.setFixedHeight(28)
+        self._provider_cbox.currentTextChanged.connect(self._on_provider_changed)
+        self._provider_cbox.setStyleSheet(f"""
+            QComboBox {{
+                background: {T.BG_L1}; color: {T.TEXT_PRIMARY};
+                border: 1px solid {T.BORDER_BASE}; border-radius: {T.RADIUS_MD}px; padding: {T.SPC_XS}px {T.SPC_SM}px;
+            }}
+            QComboBox::drop-down {{ border: none; }}
+            QComboBox QAbstractItemView {{ background: {T.BG_L2}; color: {T.TEXT_PRIMARY}; selection-background-color: {T.PRIMARY_DIM}; }}
+        """)
+        lay.addWidget(self._provider_cbox)
+
+        # \u2500 Model selector (populated from catalog) \u2500
+        self._model_cbox = QComboBox()
+        self._model_cbox.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_SM))
+        self._model_cbox.setFixedHeight(28)
+        self._model_cbox.currentTextChanged.connect(self._on_model_changed)
+        self._model_cbox.setStyleSheet(f"""
+            QComboBox {{
+                background: {T.BG_L1}; color: {T.TEXT_PRIMARY};
+                border: 1px solid {T.BORDER_BASE}; border-radius: {T.RADIUS_MD}px; padding: {T.SPC_XS}px {T.SPC_SM}px;
+            }}
+            QComboBox::drop-down {{ border: none; }}
+            QComboBox QAbstractItemView {{ background: {T.BG_L2}; color: {T.TEXT_PRIMARY}; selection-background-color: {T.PRIMARY_DIM}; }}
+        """)
+        lay.addWidget(self._model_cbox)
+
+        # \u2500 Model manual input (shown when \"custom\" selected) \u2500
+        self._model_input = QLineEdit()
+        self._model_input.setPlaceholderText("\u041c\u043e\u0434\u0435\u043b\u044c (custom)...")
+        self._model_input.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_SM))
+        self._model_input.setFixedHeight(28)
+        self._model_input.setVisible(False)
+        self._model_input.returnPressed.connect(self._on_model_changed)
+        self._model_input.setStyleSheet(f"""
+            QLineEdit {{
+                background: {T.BG_L1}; color: {T.TEXT_PRIMARY};
+                border: 1px solid {T.BORDER_BASE}; border-radius: {T.RADIUS_MD}px; padding: {T.SPC_XS}px {T.SPC_SM}px;
+            }}
+            QLineEdit:focus {{ border: 1px solid {T.BORDER_ACCENT}; }}
+        """)
+        lay.addWidget(self._model_input)
+
+        # \u2500 Base URL input \u2500
+        self._base_url_input = QLineEdit()
+        self._base_url_input.setPlaceholderText(t("ui.base_url_placeholder"))
+        self._base_url_input.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_SM))
+        self._base_url_input.setFixedHeight(28)
+        self._base_url_input.returnPressed.connect(self._on_base_url_changed)
+        self._base_url_input.setStyleSheet(f"""
+            QLineEdit {{
+                background: {T.BG_L1}; color: {T.TEXT_PRIMARY};
+                border: 1px solid {T.BORDER_BASE}; border-radius: {T.RADIUS_MD}px; padding: {T.SPC_XS}px {T.SPC_SM}px;
+            }}
+            QLineEdit:focus {{ border: 1px solid {T.BORDER_ACCENT}; }}
+        """)
+        lay.addWidget(self._base_url_input)
+
+        # \u2500 API Key input \u2500
+        self._api_key_input = QLineEdit()
+        self._api_key_input.setPlaceholderText(t("setup.api_key_in_secrets"))
+        self._api_key_input.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_SM))
+        self._api_key_input.setFixedHeight(28)
+        self._api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self._api_key_input.returnPressed.connect(self._on_api_key_saved)
+        self._api_key_input.setStyleSheet(f"""
+            QLineEdit {{
+                background: {T.BG_L1}; color: {T.TEXT_PRIMARY};
+                border: 1px solid {T.BORDER_BASE}; border-radius: {T.RADIUS_MD}px; padding: {T.SPC_XS}px {T.SPC_SM}px;
+            }}
+            QLineEdit:focus {{ border: 1px solid {T.BORDER_ACCENT}; }}
+        """)
+        lay.addWidget(self._api_key_input)
+
+        # \u2500 Save button \u2500
+        self._save_btn = QPushButton("\ud83d\udcbe SAVE SETTINGS")
+        self._save_btn.setFixedHeight(32)
+        self._save_btn.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_SM, QFont.Weight.Bold))
+        self._save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._save_btn.clicked.connect(self._save_ui_settings)
+        self._save_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {T.PRIMARY}; color: {T.BG_BASE}; border: none; border-radius: {T.RADIUS_MD}px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{ background: {T.PRIMARY_GLOW}; }}
+            QPushButton:pressed {{ background: {T.PRIMARY_DIM}; }}
+        """)
+        lay.addWidget(self._save_btn)
+
+        # \u2500 Status label \u2500
+        self._status_lbl = QLabel("STATUS: \u2014")
+        self._status_lbl.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_XS))
+        self._status_lbl.setStyleSheet(f"color: {T.TEXT_SECONDARY}; background: transparent;")
+        lay.addWidget(self._status_lbl)
+
+        self._refresh_settings_ui()
+        return w
+
+    def _refresh_settings_ui(self) -> None:
+        """Load current settings into the UI controls.
+
+        Model list is populated from the provider catalog (Gemini static
+        catalog, OpenRouter/OpenAI runtime queries, local provider HTTP).
+        """
+        try:
+            from config.schema import DEFAULT_PROVIDER_ID, ProviderBaseURL
+            from config.catalog import get_static_models
+
+            loaded = load_settings()
+            pid = getattr(loaded, "provider_id", DEFAULT_PROVIDER_ID)
+            self._provider_cbox.setCurrentText(pid)
+
+            mid = getattr(loaded, "model_id", "")
+
+            # Populate model combo from catalog for current provider
+            self._populate_model_combo(pid)
+
+            # Restore saved model selection
+            if not mid:
+                self._model_cbox.setCurrentText("(auto)")
+            else:
+                # Check if the saved model_id is in the combo
+                found = False
+                for i in range(self._model_cbox.count()):
+                    if self._model_cbox.itemData(i) == mid:
+                        self._model_cbox.setCurrentIndex(i)
+                        found = True
+                        break
+                if not found:
+                    self._model_input.setText(mid)
+                    self._model_input.setVisible(True)
+
+            ps = getattr(loaded, "provider_settings", {})
+            ps_dict = {}
+            if ps:
+                for k, v in ps.items():
+                    if hasattr(v, "to_dict"):
+                        ps_dict[k] = v.to_dict()
+                    elif isinstance(v, dict):
+                        ps_dict[k] = v
+            base_url = ""
+            if isinstance(ps_dict, dict) and pid in ps_dict:
+                base_url = ps_dict[pid].get("base_url", "") or ""
+            self._base_url_input.setText(base_url)
+
+            self._update_status(f"provider={pid}, model={mid or '(auto)'}")
+        except Exception as exc:
+            self._update_status(f"load_settings: error — {exc}")
+
+    def _update_status(self, msg: str) -> None:
+        self._status_lbl.setText(f"{t('status.connected')}: {msg}")
+
+    def _populate_model_combo(self, provider_id: str) -> None:
+        """Populate the model combo box from the catalog for a given provider."""
+        from config.catalog import get_static_models
+
+        self._model_cbox.clear()
+        self._model_cbox.addItem("(auto)", "")
+
+        # Query static catalog
+        static_models = get_static_models(provider_id)
+        if static_models:
+            for m in static_models:
+                self._model_cbox.addItem(m.display_name or m.model_id, m.model_id)
+        else:
+            # Fallback: show local models from onboard config
+            from config.onboard import LOCAL_MODELS, CLOUD_MODELS
+            from config.schema import LOCAL_PROVIDER_IDS, CLOUD_PROVIDER_IDS
+
+            models_list = []
+            if provider_id in LOCAL_PROVIDER_IDS:
+                models_list = LOCAL_MODELS.get(provider_id, [])
+            elif provider_id in CLOUD_PROVIDER_IDS:
+                models_list = CLOUD_MODELS.get(provider_id, [])
+
+            for mid, label in models_list:
+                self._model_cbox.addItem(label, mid)
+
+        # Always add custom option at the end
+        self._model_cbox.addItem("… custom", "custom")
+
+    def _on_provider_changed(self, _text: str) -> None:
+        self._populate_model_combo(_text)
+        self._update_status(f"provider changed to {_text}")
+
+    def _on_model_changed(self, _text: str) -> None:
+        self._update_status(f"model changed to {_text}")
+
+    def _on_base_url_changed(self) -> None:
+        self._update_status("base URL updated")
+
+    def _on_api_key_saved(self) -> None:
+        self._update_status("api key saved to secrets")
+
+    def _save_ui_settings(self) -> None:
+        """Persist all UI controls to settings and rebuild runtime."""
+        try:
+            from config.schema import DEFAULT_PROVIDER_ID, ProviderBaseURL, PROVIDER_IDS
+            import json
+            import os
+
+            loaded = load_settings()
+            pid = self._provider_cbox.currentText()
+            mid_text = self._model_cbox.currentText()
+
+            # Determine model_id
+            mid = ""
+            if mid_text and mid_text != "(auto)":
+                if mid_text == "custom" and self._model_input.isVisible():
+                    mid = self._model_input.text().strip()
+                else:
+                    mid = mid_text
+
+            # Determine base_url from provider_settings
+            ps_dict: dict[str, dict] = {}
+            existing_ps = getattr(loaded, "provider_settings", {})
+            if existing_ps:
+                for k, v in existing_ps.items():
+                    if hasattr(v, "to_dict"):
+                        ps_dict[k] = v.to_dict()
+                    elif isinstance(v, dict):
+                        ps_dict[k] = v
+
+            base_url = self._base_url_input.text().strip()
+            ps_dict[pid] = {
+                "base_url": base_url,
+                "remote_enabled": base_url.startswith("https://"),
+            }
+
+            provider_settings_data = {}
+            for k, v in ps_dict.items():
+                provider_settings_data[k] = ProviderBaseURL(
+                    base_url=v.get("base_url", ""),
+                    remote_enabled=v.get("remote_enabled", False),
+                )
+
+            # Update settings
+            new_settings = replace(loaded, model_id=mid, provider_settings=provider_settings_data)
+
+            # Persist
+            save_settings(new_settings)
+
+            # Update secrets if API key provided
+            api_key = self._api_key_input.text().strip()
+            if api_key and pid not in ("local", "ollama", "llama_cpp"):
+                secret_name = f"{pid}_api_key"
+                from config.secrets import set_secret
+                set_secret(secret_name, api_key)
+
+            self._update_status(f"saved: provider={pid}, model={mid or '(auto)'}")
+
+            # Rebuild runtime with new settings
+            self._build_runtime_from_settings()
+
+        except Exception as exc:
+            self._update_status(f"save error: {exc}")
+
+    def _build_runtime_from_settings(self) -> None:
+        """Rebuild RuntimeStack using current UI settings."""
+        try:
+            def _keys(name: str) -> str | None:
+                from config.secrets import get_provider_secret
+                return get_provider_secret(name)
+
+            loaded = load_settings()
+            pid = getattr(loaded, "provider_id", "gemini")
+            mode = getattr(loaded, "network_mode", "hybrid")
+            mid = getattr(loaded, "model_id", "")
+            ps_raw = getattr(loaded, "provider_settings", {})
+            ps_dict = {}
+            if ps_raw:
+                for k, v in ps_raw.items():
+                    if hasattr(v, "to_dict"):
+                        ps_dict[k] = v.to_dict()
+                    elif isinstance(v, dict):
+                        ps_dict[k] = v
+
+            if build_runtime_stack is not None:
+                stack = build_runtime_stack(
+                    repo_root=BASE_DIR,
+                    provider_id=pid,
+                    network_mode=mode,
+                    key_provider=_keys,
+                    model_id=mid,
+                    provider_settings=ps_dict,
+                )
+                self._runtime_stack = stack
+                for line in stack.summary_lines()[:12]:
+                    self._log_sig.emit(f"SYS: bridge {line}")
+
+            # Also update control plane
+            if self._control_plane is not None:
+                self._control_plane.provider_id = pid
+                self._control_plane.network_mode = mode
+
+            self._update_status(f"runtime rebuilt: provider={pid}")
+        except Exception as exc:
+            self._update_status(f"runtime rebuild failed: {exc}")
+
+
+    def _build_right_panel(self) -> QWidget:
+        w = QWidget()
+        w.setFixedWidth(_RIGHT_W)
+        w.setStyleSheet(f"background: {T.BG_L1}; border-left: 1px solid {T.BORDER_BASE};")
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(T.SPC_SM, T.SPC_SM, T.SPC_SM, T.SPC_SM)
+        lay.setSpacing(T.SPC_MD)
+
+        # Provider settings section (inserted at top of right panel)
+        self._settings_section = self._build_settings_section()
+        lay.addWidget(self._settings_section)
+
+        sep_settings = QFrame(); sep_settings.setFrameShape(QFrame.Shape.HLine)
+        sep_settings.setStyleSheet(f"color: {T.BORDER_BASE}; margin: {T.SPC_XS}px 0;")
+        lay.addWidget(sep_settings)
+
+        def _sec(txt):
+            l = QLabel(f"▸ {txt}")
+            l.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_XS, QFont.Weight.Bold))
+            l.setStyleSheet(f"color: {T.TEXT_SECONDARY}; background: transparent;")
+            return l
+
+        lay.addWidget(_sec("ACTIVITY LOG"))
+        self._log = LogWidget()
+        lay.addWidget(self._log, stretch=1)
+
+        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet(f"color: {T.BORDER_BASE}; margin: {T.SPC_XS}px 0;")
+        lay.addWidget(sep)
+
+        lay.addWidget(_sec("FILE UPLOAD"))
+        self._drop_zone = FileDropZone()
+        self._drop_zone.file_selected.connect(self._on_file_selected)
+        lay.addWidget(self._drop_zone)
+
+        self._file_hint = QLabel(t("file.file_not_loaded"))
+        self._file_hint.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_XS))
+        self._file_hint.setStyleSheet(f"color: {T.TEXT_SECONDARY}; background: transparent;")
+        self._file_hint.setWordWrap(True)
+        lay.addWidget(self._file_hint)
+
+        sep2 = QFrame(); sep2.setFrameShape(QFrame.Shape.HLine)
+        sep2.setStyleSheet(f"color: {T.BORDER_BASE}; margin: {T.SPC_XS}px 0;")
+        lay.addWidget(sep2)
+
+        lay.addWidget(_sec("COMMAND INPUT"))
+        lay.addLayout(self._build_input_row())
+
+        self._mute_btn = QPushButton("🎙  MICROPHONE ACTIVE")
+        self._mute_btn.setFixedHeight(32)
+        self._mute_btn.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_SM, QFont.Weight.Bold))
+        self._mute_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._mute_btn.clicked.connect(self._toggle_mute)
+        self._style_mute_btn()
+        lay.addWidget(self._mute_btn)
+
+        self._tts_btn = QPushButton("🗣  LOCAL TTS OFF")
+        self._tts_btn.setFixedHeight(28)
+        self._tts_btn.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_XS, QFont.Weight.Bold))
+        self._tts_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._tts_btn.clicked.connect(self._toggle_local_tts)
+        self._style_tts_btn()
+        lay.addWidget(self._tts_btn)
+
+        self._stt_btn = QPushButton("🎤  LOCAL STT LISTEN")
+        self._stt_btn.setFixedHeight(28)
+        self._stt_btn.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_XS, QFont.Weight.Bold))
+        self._stt_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._stt_btn.clicked.connect(self._listen_local_stt)
+        self._style_stt_btn()
+        lay.addWidget(self._stt_btn)
+
+        self._api_btn = QPushButton("📡  DESKTOP API OFF")
+        self._api_btn.setFixedHeight(28)
+        self._api_btn.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_XS, QFont.Weight.Bold))
+        self._api_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._api_btn.clicked.connect(self._toggle_desktop_api)
+        self._style_api_btn()
+        lay.addWidget(self._api_btn)
+
+        fs_btn = QPushButton("⛶  FULLSCREEN  [F11]")
+        fs_btn.setFixedHeight(28)
+        fs_btn.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_XS))
+        fs_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        fs_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: {T.TEXT_SECONDARY};
+                border: 1px solid {T.BORDER_BASE}; border-radius: {T.RADIUS_MD}px;
+            }}
+            QPushButton:hover {{
+                color: {T.PRIMARY}; border: 1px solid {T.BORDER_BOLD};
+            }}
+        """)
+        fs_btn.clicked.connect(self._toggle_fullscreen)
+        lay.addWidget(fs_btn)
+
+        return w
+
+    def _build_input_row(self) -> QHBoxLayout:
+        row = QHBoxLayout(); row.setSpacing(T.SPC_SM)
+        self._input = QLineEdit()
+        self._input.setPlaceholderText("Введите команду или вопрос…")
+        self._input.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_BASE))
+        self._input.setFixedHeight(32)
+        self._input.setStyleSheet(f"""
+            QLineEdit {{
+                background: {T.BG_L1}; color: {T.TEXT_PRIMARY};
+                border: 1px solid {T.BORDER_BASE}; border-radius: {T.RADIUS_MD}px; padding: {T.SPC_XS}px {T.SPC_SM}px;
+            }}
+            QLineEdit:focus {{ border: 1px solid {T.BORDER_ACCENT}; }}
+        """)
+        self._input.returnPressed.connect(self._send)
+        row.addWidget(self._input)
+
+        send = QPushButton("\u25b8")
+        send.setFixedSize(32, 32)
+        send.setFont(QFont(T.FONT_MONO, 13, QFont.Weight.Bold))
+        send.setCursor(Qt.CursorShape.PointingHandCursor)
+        send.setStyleSheet(f"""
+            QPushButton {{
+                background: {T.BG_L1}; color: {T.PRIMARY};
+                border: 1px solid {T.PRIMARY_DIM}; border-radius: {T.RADIUS_MD}px;
+            }}
+            QPushButton:hover {{ background: {T.PRIMARY_GHOST}; border: 1px solid {T.PRIMARY}; }}
+            QPushButton:pressed {{ background: {T.BG_L2}; }}
+        """)
+        send.clicked.connect(self._send)
+        row.addWidget(send)
+        return row
+
+    def _build_footer(self) -> QWidget:
+        w = QWidget()
+        w.setFixedHeight(24)
+        w.setStyleSheet(f"background: {T.BG_L1}; border-top: 1px solid {T.BORDER_BASE};")
+        lay = QHBoxLayout(w); lay.setContentsMargins(T.SPC_LG, 0, T.SPC_LG, 0)
+
+        def _fl(txt, color=T.TEXT_SECONDARY):
+            l = QLabel(txt); l.setFont(QFont(T.FONT_MONO, T.FONT_SIZE_XS))
+            l.setStyleSheet(f"color: {color}; background: transparent;")
+            return l
+
+        lay.addWidget(_fl("[F4] Mute  ·  [F11] Fullscreen"))
+        lay.addStretch()
+        lay.addWidget(_fl("Slon  ·  CLASSIFIED"))
+        lay.addStretch()
+        lay.addWidget(_fl("© STARK INDUSTRIES", T.PRIMARY_DIM))
+        return w
+
+    def _init_local_tts(self) -> None:
+        if try_build_local_tts is None:
+            self._local_tts_ready = False
+            self._local_tts_provider = None
+            self._local_tts_message = t("speech.tts_unavailable")
+            return
+        result = try_build_local_tts(repo_root=BASE_DIR)
+        self._local_tts_provider = result.provider
+        self._local_tts_ready = bool(result.ready and result.provider is not None)
+        self._local_tts_message = result.message
+        if self._local_tts_ready:
+            self._log_sig.emit(f"SYS: {result.message}")
+        else:
+            self._log_sig.emit(f"SYS: Local TTS unavailable — {result.message}")
+            self._log_sig.emit(
+                "SYS: Opt-in voice download: "
+                "python -m speech.tts download --consent"
+            )
+        self._style_tts_btn()
+
+    def _init_local_stt(self) -> None:
+        if try_build_local_stt is None:
+            self._local_stt_ready = False
+            self._local_stt_provider = None
+            self._local_stt_mic = None
+            self._local_stt_message = t("speech.stt_unavailable")
+            self._style_stt_btn()
+            return
+
+        try:
+            settings = load_settings()
+            language = getattr(settings, "language", "ru")
+            stt_engine = getattr(settings, "voice_stt_engine", "faster_whisper")
+            mic_device = getattr(settings, "voice_mic_device", None)
+        except Exception:
+            language = "ru"
+            stt_engine = "faster_whisper"
+            mic_device = None
+
+        result = try_build_local_stt(
+            repo_root=BASE_DIR,
+            language=language,
+            stt_engine=stt_engine,
+            mic_device=mic_device,
+            is_assistant_speaking=lambda: False,
+        )
+        if result.provider is not None:
+            tts = self._local_tts_provider
+
+            def _echo() -> bool:
+                speaking = getattr(tts, "is_speaking", None)
+                if callable(speaking):
+                    try:
+                        return bool(speaking())
+                    except Exception:
+                        return False
+                return bool(speaking)
+
+            result.provider.is_assistant_speaking = _echo
+
+        self._local_stt_provider = result.provider
+        self._local_stt_mic = result.mic
+        self._local_stt_ready = bool(result.ready and result.provider is not None)
+        self._local_stt_message = result.message
+        self._log_sig.emit(f"SYS: Local STT — {result.message}")
+        self._style_stt_btn()
+
+    def _style_stt_btn(self) -> None:
+        if not hasattr(self, "_stt_btn"):
+            return
+        if self._local_stt_ready:
+            self._stt_btn.setText(t("ui.stt_listen"))
+            self._stt_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: transparent; color: {T.TEXT_SECONDARY};
+                    border: 1px solid {T.BORDER_BASE}; border-radius: {T.RADIUS_MD}px;
+                }}
+                QPushButton:hover {{ color: {T.PRIMARY}; border: 1px solid {T.BORDER_BOLD}; }}
+            """)
+            self._stt_btn.setEnabled(True)
+        else:
+            self._stt_btn.setText(t("ui.stt_na"))
+            self._stt_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: transparent; color: {T.TEXT_TERTIARY};
+                    border: 1px solid {T.BORDER_BASE}; border-radius: {T.RADIUS_MD}px;
+                }}
+            """)
+            self._stt_btn.setEnabled(False)
+
+    def _apply_stt_text(self, text: str) -> None:
+        if hasattr(self, "_input") and text:
+            self._input.setText(text)
+
+    def _listen_local_stt(self) -> None:
+        if not self._local_stt_ready or self._local_stt_provider is None:
+            self._log.append_log(f"SYS: {self._local_stt_message}")
+            return
+        if self._local_stt_mic is None:
+            self._log.append_log("SYS: Microphone unavailable for local STT.")
+            return
+        provider = self._local_stt_provider
+        mic = self._local_stt_mic
+
+        def _run() -> None:
+            import asyncio
+            try:
+                from providers.contracts import AudioRequest, ModelInfo
+                from speech.stt.provider import PROVIDER_ID
+
+                self._state_sig.emit("LISTENING")
+                self._log_sig.emit("SYS: Local STT recording 3s…")
+                clip = mic.record(3.0)
+                model = ModelInfo(
+                    provider_id=PROVIDER_ID,
+                    model_id="local-stt",
+                    display_name="Local STT",
+                    audio_input=True,
+                    local=True,
+                )
+                transcript = asyncio.run(
+                    provider.transcribe(AudioRequest(model=model, audio=clip.audio))
+                )
+                text = (transcript.text or "").strip()
+                if text:
+                    self._log_sig.emit(f"YOU (STT): {text}")
+                    self._stt_text_sig.emit(text)
+                else:
+                    self._log_sig.emit(
+                        "SYS: Local STT empty (install openai-whisper for offline ASR)."
+                    )
+            except Exception as exc:
+                self._log_sig.emit(f"SYS: Local STT error — {exc}")
+            finally:
+                if not self._muted:
+                    self._state_sig.emit("LISTENING")
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _init_runtime_bridge(self) -> None:
+        if build_runtime_stack is None:
+            self._runtime_stack = None
+            self._log_sig.emit("SYS: runtime bridge unavailable")
+            return
+        try:
+            def _keys(name: str) -> str | None:
+                return get_secret(name)
+
+            # Read full settings from disk (Wave 15+).
+            try:
+                loaded = load_settings()
+                provider_id = getattr(loaded, "provider_id", DEFAULT_PROVIDER_ID)
+                network_mode = getattr(loaded, "network_mode", "hybrid")
+                model_id = getattr(loaded, "model_id", "")
+                ps_raw = getattr(loaded, "provider_settings", {})
+            except Exception:
+                provider_id = DEFAULT_PROVIDER_ID
+                network_mode = "hybrid"
+                model_id = ""
+                ps_raw = {}
+
+            # Convert provider_settings to dict for bridge
+            ps_dict = {}
+            if ps_raw:
+                for k, v in ps_raw.items():
+                    if hasattr(v, "to_dict"):
+                        ps_dict[k] = v.to_dict()
+                    elif isinstance(v, dict):
+                        ps_dict[k] = v
+
+            stack = build_runtime_stack(
+                repo_root=BASE_DIR,
+                provider_id=provider_id,
+                network_mode=network_mode,
+                key_provider=_keys,
+                model_id=model_id,
+                provider_settings=ps_dict,
+            )
+            self._runtime_stack = stack
+            for line in stack.summary_lines()[:12]:
+                self._log_sig.emit(f"SYS: bridge {line}")
+        except Exception as exc:
+            self._runtime_stack = None
+            self._log_sig.emit(
+                f"SYS: runtime bridge failed — {type(exc).__name__}"
+            )
+
+    def _init_control_plane(self) -> None:
+        self._control_plane = None
+        if DesktopControlPlane is None:
+            return
+        stack = self._runtime_stack
+        try:
+            plane = DesktopControlPlane(
+                provider_id=getattr(stack, "provider_id", "gemini"),
+                network_mode=getattr(stack, "network_mode", "hybrid"),
+            )
+            plane.update_state(
+                local_tts_available=bool(self._local_tts_ready),
+                local_stt_available=bool(self._local_stt_ready),
+                mic_active=not self._muted,
+                assistant_state=str(self.hud.state),
+            )
+            plane.bind_command("start", self._remote_start)
+            plane.bind_command("pause", self._remote_pause)
+            plane.bind_command("stop", self._remote_stop)
+            plane.bind_command("mute", lambda: self._set_muted(True))
+            plane.bind_command("unmute", lambda: self._set_muted(False))
+            plane.bind_command("toggle_tts", self._toggle_local_tts)
+            plane.bind_command("listen_stt", self._listen_local_stt)
+            self._control_plane = plane
+        except Exception as exc:
+            self._log_sig.emit(f"SYS: control plane unavailable — {exc}")
+
+    def _remote_start(self) -> None:
+        self._set_muted(False)
+        self._state_sig.emit("LISTENING")
+        self._log_sig.emit("SYS: Remote requested runtime start.")
+
+    def _remote_pause(self) -> None:
+        self._set_muted(True)
+        self._log_sig.emit("SYS: Remote paused microphone input.")
+
+    def _remote_stop(self) -> None:
+        self._set_muted(True)
+        self._state_sig.emit("PROCESSING")
+        self._log_sig.emit("SYS: Remote stopped the active input session.")
+
+    def _style_tts_btn(self) -> None:
+        if not hasattr(self, "_tts_btn"):
+            return
+        if self._local_tts_enabled and self._local_tts_ready:
+            self._tts_btn.setText(t("ui.tts_on"))
+            self._tts_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {T.SUCCESS}; color: {T.BG_BASE};
+                    border: 1px solid {T.SUCCESS}; border-radius: {T.RADIUS_MD}px;
+                    font-weight: bold;
+                }}
+            """)
+        elif self._local_tts_ready:
+            self._tts_btn.setText(t("ui.tts_off"))
+            self._tts_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: transparent; color: {T.TEXT_SECONDARY};
+                    border: 1px solid {T.BORDER_BASE}; border-radius: {T.RADIUS_MD}px;
+                }}
+                QPushButton:hover {{ color: {T.PRIMARY}; border: 1px solid {T.BORDER_BOLD}; }}
+            """)
+        else:
+            self._tts_btn.setText(t("ui.tts_na"))
+            self._tts_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: transparent; color: {T.TEXT_TERTIARY};
+                    border: 1px solid {T.BORDER_BASE}; border-radius: {T.RADIUS_MD}px;
+                }}
+            """)
+
+    def _toggle_local_tts(self) -> None:
+        if not self._local_tts_ready:
+            self._log.append_log(f"SYS: {self._local_tts_message}")
+            self._style_tts_btn()
+            return
+        self._local_tts_enabled = not self._local_tts_enabled
+        self._style_tts_btn()
+        state = "enabled" if self._local_tts_enabled else "disabled"
+        self._log_sig.emit(f"SYS: Local Piper TTS {state}.")
+        plane = getattr(self, "_control_plane", None)
+        if plane is not None:
+            plane.update_state(local_tts_enabled=self._local_tts_enabled)
+
+    def _style_api_btn(self) -> None:
+        if not hasattr(self, "_api_btn"):
+            return
+        listening = bool(self._desktop_listener and self._desktop_listener.listening)
+        if listening:
+            addr = self._desktop_listener.address
+            label = f"📡  API {addr[0]}:{addr[1]}" if addr else "📡  DESKTOP API ON"
+            self._api_btn.setText(label)
+            self._api_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {T.PRIMARY_GHOST}; color: {T.PRIMARY};
+                    border: 1px solid {T.PRIMARY}; border-radius: {T.RADIUS_MD}px;
+                    font-weight: bold;
+                }}
+            """)
+        else:
+            self._api_btn.setText(t("ui.desktop_api_off"))
+            self._api_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: transparent; color: {T.TEXT_SECONDARY};
+                    border: 1px solid {T.BORDER_BASE}; border-radius: {T.RADIUS_MD}px;
+                }}
+                QPushButton:hover {{ color: {T.PRIMARY}; border: 1px solid {T.BORDER_BOLD}; }}
+            """)
+
+    def _toggle_desktop_api(self) -> None:
+        if DesktopControlListener is None:
+            self._log.append_log("SYS: Desktop Control listener unavailable.")
+            return
+        if self._desktop_listener and self._desktop_listener.listening:
+            self._desktop_listener.stop()
+            self._desktop_listener = None
+            if self._gateway is not None:
+                self._gateway.close()
+                self._gateway = None
+            self._desktop_tls = False
+            self._style_api_btn()
+            self._log.append_log("SYS: Desktop Control API stopped.")
+            return
+        gateway = None
+        try:
+            tls_cert = None
+            tls_key = None
+            use_tls = False
+            # Prefer existing models/certs material; never generate silently.
+            if ensure_tls_material is not None:
+                try:
+                    material = ensure_tls_material(
+                        repo_root=BASE_DIR,
+                        generate=False,
+                    )
+                    tls_cert = material.certfile
+                    tls_key = material.keyfile
+                    use_tls = True
+                except Exception:
+                    use_tls = False
+            gateway = None
+            if build_gateway is not None and self._runtime_stack is not None:
+                signing_key = get_secret("gateway_signing_key")
+                if not signing_key:
+                    signing_key = base64.b64encode(secrets.token_bytes(32)).decode()
+                    set_secret("gateway_signing_key", signing_key)
+                gateway = build_gateway(
+                    repo_root=BASE_DIR,
+                    runtime_stack=self._runtime_stack,
+                    key_provider=get_secret,
+                )
+            listener = DesktopControlListener(
+                tls_certfile=tls_cert,
+                tls_keyfile=tls_key,
+                require_tls=use_tls,
+                advertise_bonjour=True,
+                control_plane=self._control_plane,
+                memory_backend=getattr(self._runtime_stack, "memory", None),
+                files_root=BASE_DIR,
+                gateway=gateway,
+            )
+            host, port = listener.start()
+            self._desktop_listener = listener
+            self._gateway = gateway
+            self._desktop_tls = bool(listener.tls_enabled)
+            self._style_api_btn()
+            scheme = listener.scheme
+            self._log.append_log(
+                f"SYS: Desktop Control API listening on {scheme}://{host}:{port}/v1 "
+                f"(loopback; auth/pairing required; tls={listener.tls_enabled})."
+            )
+            if not use_tls:
+                self._log.append_log(
+                    "SYS: TLS optional — "
+                    "python -m server --tls --tls-generate  "
+                    "(see docs/audit/tls-lan.md)"
+                )
+        except Exception as exc:
+            if gateway is not None:
+                gateway.close()
+            self._desktop_listener = None
+            self._gateway = None
+            self._desktop_tls = False
+            self._style_api_btn()
+            self._log.append_log(f"SYS: Desktop API start failed — {exc}")
+
+    def speak_local(self, text: str) -> None:
+        """Синтезирует голос через Piper, если локальный TTS включён; иначе бездействие."""
+        if not self._local_tts_enabled or not self._local_tts_ready:
+            return
+        provider = self._local_tts_provider
+        if provider is None or not text or not str(text).strip():
+            return
+
+        def _run() -> None:
+            import asyncio
+            from speech.tts.sentences import split_sentences
+            try:
+                self._state_sig.emit("SPEAKING")
+                for sentence in split_sentences(str(text)):
+                    if self._muted:
+                        break
+                    audio = asyncio.run(provider.preview(sentence))
+                    if play_wav_bytes is not None and audio.data:
+                        play_wav_bytes(audio.data)
+            except Exception as exc:
+                self._log_sig.emit(f"SYS: Local TTS error — {exc}")
+            finally:
+                if not self._muted:
+                    self._state_sig.emit("LISTENING")
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def start_wake_word_listener(self, on_command) -> bool:
+        """Start always-on local voice input for text-based providers."""
+        if not self._local_stt_ready or self._local_stt_provider is None or self._local_stt_mic is None:
+            self._log_sig.emit("SYS: Wake word unavailable — local STT/microphone is not ready.")
+            return False
+        from runtime.wake_word import WakeWordListener
+
+        self._local_tts_enabled = bool(self._local_tts_ready)
+        self._style_tts_btn()
+        self._wake_word_listener = WakeWordListener(
+            mic=self._local_stt_mic,
+            stt_provider=self._local_stt_provider,
+            on_command=on_command,
+            on_log=self._log_sig.emit,
+            on_state=self._state_sig.emit,
+            wake_model_path=BASE_DIR / "models" / "wake_word" / "slon.onnx",
+        )
+        self._wake_word_listener.start()
+        return True
+
+    def _on_file_selected(self, path: str):
+        self._current_file = path
+        p    = Path(path)
+        cat  = _file_category(p)
+        icon, _ = _FILE_ICONS.get(cat, _FILE_ICONS["unknown"])
+        size = _fmt_size(p.stat().st_size)
+        self._file_hint.setText(f"{icon}  {p.name}  ·  {size}  ·  {t('ui.file_hint_default')}")
+        self._log_sig.emit(f"FILE: {p.name} ({size}) loaded")
+        if self.on_text_command:
+            msg = (
+                f"[FILE_UPLOADED] path={path} | name={p.name} | "
+                f"type={p.suffix.lstrip('.')} | size={size} | "
+                f"Briefly tell the user you can see the file '{p.name}' "
+                f"({size}) has been uploaded and ask what they'd like to do with it."
+            )
+            threading.Thread(target=self.on_text_command, args=(msg,), daemon=True).start()
+
+    def _toggle_mute(self):
+        self._set_muted(not self._muted)
+
+    def _set_muted(self, value: bool) -> None:
+        self._muted = bool(value)
+        self.hud.muted = self._muted
+        self._style_mute_btn()
+        if self._muted:
+            self._apply_state("MUTED")
+            self._log_sig.emit("SYS: Microphone muted.")
+        else:
+            self._apply_state("LISTENING")
+            self._log_sig.emit("SYS: Microphone active.")
+        plane = getattr(self, "_control_plane", None)
+        if plane is not None:
+            plane.update_state(mic_active=not self._muted)
+
+    def _style_mute_btn(self):
+        if self._muted:
+            self._mute_btn.setText(t("ui.mic_muted"))
+            self._mute_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {T.PRIMARY_GHOST}; color: {T.ERROR};
+                    border: 1px solid {T.ERROR}; border-radius: {T.RADIUS_MD}px;
+                }}
+            """)
+        else:
+            self._mute_btn.setText(t("ui.mic_active"))
+            self._mute_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {T.SUCCESS}; color: {T.BG_BASE};
+                    border: 1px solid {T.SUCCESS}; border-radius: {T.RADIUS_MD}px;
+                    font-weight: bold;
+                }}
+                QPushButton:hover {{ background: {T.SUCCESS}; }}
+            """)
+
+    def _send(self):
+        txt = self._input.text().strip()
+        if not txt: return
+        self._input.clear()
+        self._log_sig.emit(t("chat.user", text=txt))
+        if self.on_text_command:
+            threading.Thread(target=self.on_text_command, args=(txt,), daemon=True).start()
+
+    def _apply_state(self, state: str):
+        self.hud.state    = state
+        self.hud.speaking = (state == "SPEAKING")
+        plane = getattr(self, "_control_plane", None)
+        if plane is not None:
+            plane.update_state(assistant_state=str(state))
+
+    def _apply_log(self, text: str) -> None:
+        self._log.append_log(text)
+        plane = getattr(self, "_control_plane", None)
+        if plane is not None:
+            plane.append_log(text)
+
+    def _check_config(self) -> bool:
+        """Return True if at least one provider API key is configured."""
+        from config.onboard import has_valid_config
+        return has_valid_config()
+
+    def _show_setup(self):
+        from ui.onboard_widget import OnboardingWizard
+        from config.onboard import has_valid_config
+
+        if has_valid_config():
+            self._ready = True
+            return
+
+        ov = OnboardingWizard(self.centralWidget())
+        ov.setGeometry(
+            (self.centralWidget().width()  - 560) // 2,
+            (self.centralWidget().height() - 600) // 2,
+            560, 600,
+        )
+        ov.done.connect(self._on_setup_done)
+        ov.show()
+        self._overlay = ov
+
+    def _on_setup_done(self, result):
+        from config.onboard import apply_onboard_result
+        from config.secrets import get_secret
+
+        warnings: list[str] = []
+        try:
+            gemini_key = get_secret("gemini_api_key") or ""
+            openrouter_key = get_secret("openrouter_api_key") or ""
+            openai_key = get_secret("openai_api_key") or ""
+        except Exception:
+            gemini_key = openrouter_key = openai_key = ""
+
+        try:
+            settings, warnings = apply_onboard_result(result, gemini_key, openrouter_key, openai_key)
+            if warnings:
+                self._log_sig.emit(f"SYS: Onboarding warnings: {'; '.join(warnings)}")
+        except Exception as exc:
+            self._log_sig.emit(f"SYS: Onboarding apply failed: {exc}")
+
+        self._settings = settings if 'settings' in dir() else settings
+        self._ready = True
+        if self._overlay:
+            self._overlay.hide()
+            self._overlay = None
+        self._apply_state("LISTENING")
+        self._log_sig.emit("SYS: Onboarding complete. Slon online.")
+
+class _RootShim:
+    def __init__(self, app: QApplication):
+        self._app = app
+    def mainloop(self):
+        self._app.exec()
+    def protocol(self, *_):
+        pass
+
+
+class SlonUI:
+    def __init__(self, face_path: str, size=None):
+        self._app = QApplication.instance() or QApplication(sys.argv)
+        self._app.setStyle("Fusion")
+        self._win = MainWindow(face_path)
+        self._win.show()
+        self.root = _RootShim(self._app)
+
+    @property
+    def muted(self) -> bool:
+        return self._win._muted
+
+    @muted.setter
+    def muted(self, v: bool):
+        if v != self._win._muted:
+            self._win._toggle_mute()
+
+    @property
+    def current_file(self) -> str | None:
+        return self._win._drop_zone.current_file()
+
+    @property
+    def control_plane(self):
+        return getattr(self._win, "_control_plane", None)
+
+    @property
+    def on_text_command(self):
+        return self._win.on_text_command
+
+    @on_text_command.setter
+    def on_text_command(self, cb):
+        self._win.on_text_command = cb
+
+    def set_state(self, state: str):
+        self._win._state_sig.emit(state)
+
+    def write_log(self, text: str):
+        self._win._log_sig.emit(text)
+
+    def wait_for_api_key(self):
+        while not self._win._ready:
+            time.sleep(0.1)
+
+    @property
+    def local_tts_ready(self) -> bool:
+        return bool(self._win._local_tts_ready)
+
+    @property
+    def local_tts_enabled(self) -> bool:
+        return bool(self._win._local_tts_enabled)
+
+    def enable_local_tts(self, enabled: bool = True) -> bool:
+        if enabled and not self._win._local_tts_ready:
+            return False
+        self._win._local_tts_enabled = bool(enabled) and self._win._local_tts_ready
+        self._win._style_tts_btn()
+        return self._win._local_tts_enabled
+
+    def speak_local(self, text: str) -> None:
+        self._win.speak_local(text)
+
+    def start_wake_word_listener(self, on_command) -> bool:
+        return self._win.start_wake_word_listener(on_command)
+
+    def start_desktop_api(self) -> tuple[str, int] | None:
+        if self._win._desktop_listener and self._win._desktop_listener.listening:
+            return self._win._desktop_listener.address
+        if not self._win._desktop_listener:
+            self._win._toggle_desktop_api()
+        if self._win._desktop_listener and self._win._desktop_listener.listening:
+            return self._win._desktop_listener.address
+        return None
+
+    def stop_desktop_api(self) -> None:
+        if self._win._desktop_listener and self._win._desktop_listener.listening:
+            self._win._toggle_desktop_api()
+
+    def start_speaking(self):
+        self.set_state("SPEAKING")
+
+    def stop_speaking(self):
+        if not self.muted:
+            self.set_state("LISTENING")
+
+
+JarvisUI = SlonUI

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from i18n import t
+
+
 import os
 import platform
 import shutil
@@ -9,9 +12,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from mark.safety import authorize, check_url, validate_args
-from mark.safety.errors import ArgValidationError
-from mark.safety.types import DecisionKind, SafetyDecision, UntrustedSource
+from acta.safety import authorize, check_url, validate_args
+from acta.safety.errors import ArgValidationError
+from acta.safety.types import DecisionKind, SafetyDecision, UntrustedSource
 
 TOOL_NAME = "desktop_control"
 
@@ -178,7 +181,7 @@ def _default_mouse_click(x: int, y: int, button: str = "left") -> str:
 def _default_keyboard_type(text: str) -> str:
     pyautogui = _load_pyautogui()
     pyautogui.typewrite(text)
-    return "Typed text."
+    return "Текст введён."
 
 
 def _default_keyboard_shortcut(keys: str | list[str]) -> str:
@@ -211,7 +214,7 @@ def _default_window_activate(title: str) -> str:
             check=False,
         )
         if completed.returncode != 0:
-            return "Could not activate window."
+            return "Не удалось активировать окно."
         return f"Activated window: {safe_title}"
     pyautogui = _load_pyautogui()
     windows = pyautogui.getWindowsWithTitle(safe_title)
@@ -248,7 +251,7 @@ def _default_file_copy(source: str, destination: str) -> str:
 def list_desktop(desktop: Path | None = None) -> str:
     root = desktop if desktop is not None else _get_desktop()
     if not root.exists() or not root.is_dir():
-        return "Desktop is empty."
+        return "Рабочий стол пуст."
     items: list[str] = []
     for item in sorted(root.iterdir()):
         if item.name.startswith("."):
@@ -268,7 +271,7 @@ def list_desktop(desktop: Path | None = None) -> str:
             )
             items.append(f"📄 {item.name} ({size_str})")
     if not items:
-        return "Desktop is empty."
+        return "Рабочий стол пуст."
     return f"Desktop ({len(items)} items):\n" + "\n".join(items)
 
 

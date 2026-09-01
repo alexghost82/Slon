@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from mark.safety.types import RiskLevel
-from mark.tools.contracts import ToolSpec
-from mark.tools.exporters import export_gemini_tools, export_openai_tools, export_tools
+from acta.safety.types import RiskLevel
+from acta.tools.contracts import ToolSpec
+from acta.tools.exporters import export_gemini_tools, export_openai_tools, export_tools
 
 
 def _handler(arguments: object) -> object:
@@ -69,6 +69,33 @@ def test_gemini_export_is_plain_function_declaration() -> None:
             },
         }
     ]
+
+
+def test_gemini_export_removes_live_unsupported_additional_properties() -> None:
+    spec = _spec()
+    schema = dict(spec.input_schema)
+    schema["additionalProperties"] = True
+    schema["properties"] = {
+        "nested": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {"value": {"type": "string"}},
+        }
+    }
+    spec = ToolSpec(
+        name=spec.name,
+        description=spec.description,
+        input_schema=schema,
+        output_schema=spec.output_schema,
+        handler=spec.handler,
+        risk=spec.risk,
+    )
+
+    exported = export_gemini_tools([spec])
+    rendered = repr(exported)
+
+    assert "additionalProperties" not in rendered
+    assert schema["additionalProperties"] is True
 
 
 def test_exports_preserve_sequence_and_do_not_mutate_schema() -> None:

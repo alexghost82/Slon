@@ -1,4 +1,9 @@
+from __future__ import annotations
+
 import asyncio
+
+from i18n import t
+
 import base64
 import io
 import json
@@ -29,8 +34,6 @@ def get_base_dir():
     return Path(__file__).resolve().parent.parent
 
 BASE_DIR        = get_base_dir()
-API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
-
 LIVE_MODEL          = "models/gemini-2.5-flash-native-audio-preview-12-2025"
 CHANNELS            = 1
 RECEIVE_SAMPLE_RATE = 24000
@@ -52,23 +55,21 @@ SYSTEM_PROMPT = (
 
 
 def _get_api_key() -> str:
-    try:
-        with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-            keys = json.load(f)
-        key = keys.get("gemini_api_key", "")
-        if not key:
-            raise ValueError("gemini_api_key not found")
-        return key
-    except Exception as e:
-        raise RuntimeError(f"Could not load API key: {e}")
+    from config.secrets import get_secret
+
+    key = get_secret("gemini_api_key")
+    if key is None:
+        raise RuntimeError(t("error.gemini_key_missing"))
+    return key
 
 
 def _get_camera_index() -> int:
+    from config.settings import load_settings
+
     try:
-        with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-            cfg = json.load(f)
-        if "camera_index" in cfg:
-            return int(cfg["camera_index"])
+        configured = load_settings().camera_index
+        if configured is not None:
+            return configured
     except Exception:
         pass
 
@@ -92,13 +93,10 @@ def _get_camera_index() -> int:
             print(f"[Camera] ⚠️  Index {idx}: no valid frame.")
 
     try:
-        cfg = {}
-        if API_CONFIG_PATH.exists():
-            with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-        cfg["camera_index"] = best_index
-        with open(API_CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, indent=4)
+        from dataclasses import replace
+        from config.settings import load_settings, save_settings
+
+        save_settings(replace(load_settings(), camera_index=best_index))
         print(f"[Camera] 💾 Camera index {best_index} saved to config.")
     except Exception as e:
         print(f"[Camera] ⚠️  Could not save camera index: {e}")
@@ -127,13 +125,13 @@ def _capture_camera() -> bytes:
     camera_index = _get_camera_index()
     cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
     if not cap.isOpened():
-        raise RuntimeError(f"Camera could not be opened: index {camera_index}")
+        raise RuntimeError(t("error.camera_open_failed", index=camera_index))
     for _ in range(10):
         cap.read()
     ret, frame = cap.read()
     cap.release()
     if not ret or frame is None:
-        raise RuntimeError("Could not capture camera frame.")
+        raise RuntimeError(t("error.camera_capture_failed"))
     if _PIL_OK:
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         img = PIL.Image.fromarray(rgb)
@@ -167,7 +165,7 @@ class _LiveSession:
         self._thread.start()
         ok = self._ready.wait(timeout=20)
         if not ok:
-            raise RuntimeError("Vision session did not start within 20s.")
+            raise RuntimeError(t("error.vision_session_timeout"))
         print("[ScreenProcess] ✅ Vision session ready (no mic)")
 
     def _run_loop(self):
@@ -253,8 +251,10 @@ class _LiveSession:
                     if transcript_buf and self._player:
                         full = re.sub(r'\s+', ' ', " ".join(transcript_buf)).strip()
                         if full:
-                            self._player.write_log(f"Slon: {full}")
-                            print(f"[ScreenProcess] 💬 {full}")
+                            self._player.write_log(t("actions.slon_speaking", text=full))
+                            print(
+                                f"[ScreenProcess] 💬 transcript_length={len(full)}"
+                            )
                     transcript_buf = []
         except Exception as e:
             print(f"[ScreenProcess] ⚠️ Recv error: {e}")
@@ -320,7 +320,7 @@ def screen_process(
         return False
 
     angle = (parameters or {}).get("angle", "screen").lower().strip()
-    print(f"[ScreenProcess] angle={angle!r}  text={user_text!r}")
+    print(f"[ScreenProcess] angle={angle!r} text_length={len(user_text)}")
 
     _ensure_started(player=player)
 
@@ -358,10 +358,10 @@ if __name__ == "__main__":
 
     t0 = time.perf_counter()
     warmup_session()
-    print(f"Session ready — {time.perf_counter()-t0:.2f}s\n")
+    print(t("actions.session_ready", t=time.perf_counter()-t0))
 
     t1     = time.perf_counter()
     result = screen_process({"angle": mode, "text": request}, player=None)
-    print(f"Sent — {time.perf_counter()-t1:.3f}s | audio incoming...")
+    print(t("actions.sent_incoming", t=time.perf_counter()-t1))
     time.sleep(8)
     print(f"\n{'✅' if result else '❌'}")

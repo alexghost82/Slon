@@ -13,6 +13,7 @@ from providers.contracts import (
     ChatRequest,
     ChatResponse,
     ModelInfo,
+    ToolCall,
 )
 from providers.errors import CapabilityError, ProviderAuthError
 from providers.openai.client import OpenAIHttpClient
@@ -215,6 +216,21 @@ async def test_stream_yields_delta_then_done() -> None:
     assert transport.calls[0]["json"]["stream"] is True
 
 
+async def test_stream_assembles_fragmented_tool_call() -> None:
+    transport = FakeTransport()
+    transport.stream_lines = [
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1",'
+        '"function":{"name":"lookup","arguments":"{\\"q\\":"}}]}}]}',
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+        '"function":{"arguments":"\\"x\\"}"}}]},"finish_reason":"tool_calls"}]}',
+        "data: [DONE]",
+    ]
+    provider, _ = _provider(transport)
+    events = [event async for event in provider.stream(_request())]
+    assert [event.type for event in events] == ["tool_call", "done"]
+    assert events[0].tool_call == ToolCall("call-1", "lookup", {"q": "x"})
+
+
 def test_factory_is_registered_as_openai() -> None:
     import providers.openai as openai_pkg
     import providers.openai.provider as provider_mod
@@ -244,7 +260,7 @@ async def test_text_only_model_capabilities_are_conservative() -> None:
     assert model.vision is False
     assert model.audio_input is False
     assert model.audio_output is False
-    assert model.tool_calling is False
+    assert model.tool_calling is True
     assert model.structured_output is False
     assert model.embeddings is False
     assert len(transport.calls) == 1
@@ -255,7 +271,7 @@ def test_known_chat_model_does_not_claim_vision() -> None:
     flags = conservative_capabilities("gpt-4o")
     assert flags["text"] is True
     assert flags["vision"] is False
-    assert flags["tool_calling"] is False
+    assert flags["tool_calling"] is True
 
 
 async def test_chat_sends_exactly_one_requested_model() -> None:

@@ -5,8 +5,15 @@ from collections.abc import Iterator
 
 import pytest
 
-from providers.contracts import ChatMessage, ChatProvider, ChatRequest, ModelInfo
-from providers.errors import CapabilityError, ProviderAuthError
+from providers.contracts import (
+    ChatMessage,
+    ChatProvider,
+    ChatRequest,
+    ModelInfo,
+    ToolCall,
+    ToolDefinition,
+)
+from providers.errors import CapabilityError, ProviderAuthError, ProviderError
 from providers.gemini.catalog import PROVIDER_ID
 from providers.gemini.provider import GeminiChatProvider
 from providers.registry import get
@@ -84,7 +91,7 @@ async def test_missing_key_validate_is_not_ok_and_skips_client() -> None:
     status = await provider.validate()
     assert status.ok is False
     assert status.provider_id == "gemini"
-    assert "missing" in status.message.lower()
+    assert "отсутствует" in status.message.lower()
 
 
 async def test_blank_key_is_treated_as_missing() -> None:
@@ -139,6 +146,56 @@ async def test_stream_yields_delta_then_done() -> None:
     assert {event.type for event in events} <= {"delta", "done"}
 
 
+async def test_stream_sends_tools_and_emits_native_function_call() -> None:
+    class ToolChunk:
+        text = ""
+        function_calls = [
+            type("Call", (), {"id": "g-1", "name": "lookup", "args": {"q": "x"}})()
+        ]
+
+    client = FakeGeminiClient()
+
+    def stream(**kwargs: object):
+        client.generate_content_stream_calls.append(dict(kwargs))
+        yield ToolChunk()
+
+    client.generate_content_stream = stream
+    provider = GeminiChatProvider(api_key="test-key-not-real", client=client)
+    request = ChatRequest(
+        model=_text_model(tool_calling=True),
+        messages=(ChatMessage(role="user", content="lookup"),),
+        tools=(ToolDefinition("lookup", "Lookup", {"type": "object"}),),
+    )
+    events = [event async for event in provider.stream(request)]
+    assert events[0].tool_call == ToolCall("g-1", "lookup", {"q": "x"})
+    assert events[-1].type == "done"
+    config = client.generate_content_stream_calls[0]["config"]
+    assert config["tools"][0]["function_declarations"][0]["name"] == "lookup"
+
+
+async def test_stream_rejects_duplicate_native_function_call_ids() -> None:
+    class ToolChunk:
+        text = ""
+
+        def __init__(self, value: str) -> None:
+            self.function_calls = [
+                type(
+                    "Call",
+                    (),
+                    {"id": "same", "name": "lookup", "args": {"q": value}},
+                )()
+            ]
+
+    client = FakeGeminiClient()
+    client.generate_content_stream = lambda **_kwargs: iter(
+        (ToolChunk("first"), ToolChunk("second"))
+    )
+    provider = GeminiChatProvider(api_key="test-key-not-real", client=client)
+    with pytest.raises(ProviderError, match="повторяющийся"):
+        async for _event in provider.stream(_request(_text_model())):
+            pass
+
+
 async def test_list_models_uses_gemini_provider_id_and_honest_flags() -> None:
     provider = GeminiChatProvider(api_key=None, client_factory=ExplodingFactory())
     models = await provider.list_models()
@@ -153,7 +210,7 @@ async def test_list_models_uses_gemini_provider_id_and_honest_flags() -> None:
 
 async def test_chat_without_key_raises_auth_error_after_capability_check() -> None:
     provider = GeminiChatProvider(api_key=None, client_factory=ExplodingFactory())
-    with pytest.raises(ProviderAuthError, match="missing"):
+    with pytest.raises(ProviderAuthError, match="отсутствует"):
         await provider.chat(_request(_text_model()))
 
 

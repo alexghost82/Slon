@@ -1,18 +1,19 @@
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Mapping
 
 import pytest
 
-from mark.safety import (
+from acta.safety import (
     DecisionKind,
     RiskLevel,
     SafetyDecision,
     SafetyPolicy,
     UntrustedSource,
 )
-from mark.tools import ToolExecutor, ToolRegistry, ToolResult, ToolSpec
+from acta.tools import SideEffectClass, ToolExecutor, ToolRegistry, ToolResult, ToolSpec
 
 
 class RecordingPolicy:
@@ -127,6 +128,28 @@ def test_confirmation_precedes_handler() -> None:
     assert policy.events == ["validate", "authorize", "confirm", "handler"]
 
 
+def test_canonical_tool_call_id_reaches_confirmation_for_single_and_batch() -> None:
+    policy = RecordingPolicy(DecisionKind.CONFIRM)
+    correlated: list[str | None] = []
+    executor = build_executor(
+        lambda arguments: arguments,
+        policy,
+        confirmer=lambda decision: correlated.append(decision.tool_call_id) or True,
+    )
+
+    first = executor.execute(
+        "web_search", {"value": "single"}, source=UntrustedSource.USER,
+        tool_call_id="provider-single",
+    )
+    batch = executor.execute_many(
+        (("provider-batch", "web_search", {"value": "batch"}),),
+        source=UntrustedSource.USER,
+    )
+
+    assert first.ok and batch[0].ok
+    assert correlated == ["provider-single", "provider-batch"]
+
+
 def test_model_override_fields_do_not_skip_policy_confirmation() -> None:
     policy = RecordingPolicy(DecisionKind.CONFIRM)
     called = False
@@ -224,6 +247,132 @@ def test_timeout_is_bounded_and_handler_is_not_retried() -> None:
         assert result.warnings
     finally:
         release.set()
+
+
+def test_execute_many_parallel_safe_preserves_input_order() -> None:
+    registry = ToolRegistry()
+    barrier = threading.Barrier(2)
+
+    def handler(arguments):
+        barrier.wait(timeout=1)
+        return {"value": arguments["value"]}
+
+    for name in ("read_a", "read_b"):
+        registry.register(
+            ToolSpec(
+                name=name,
+                description=name,
+                input_schema={"type": "object"},
+                output_schema=None,
+                handler=handler,
+                risk=RiskLevel.READ,
+                read_only=True,
+                idempotent=True,
+                side_effects=False,
+                parallel_safe=True,
+            )
+        )
+    executor = ToolExecutor(registry, RecordingPolicy())  # type: ignore[arg-type]
+
+    results = executor.execute_many(
+        (("read_a", {"value": 1}), ("read_b", {"value": 2})),
+        source=UntrustedSource.USER,
+    )
+
+    assert [result.data for result in results] == [{"value": 1}, {"value": 2}]
+
+
+def test_execute_many_side_effects_are_sequential() -> None:
+    registry = ToolRegistry()
+    active = 0
+    max_active = 0
+
+    def handler(arguments):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        time.sleep(0.01)
+        active -= 1
+        return arguments
+
+    registry.register(
+        ToolSpec(
+            name="write",
+            description="write",
+            input_schema={"type": "object"},
+            output_schema=None,
+            handler=handler,
+            risk=RiskLevel.CONFIRM,
+        )
+    )
+    executor = ToolExecutor(registry, RecordingPolicy())  # type: ignore[arg-type]
+    executor.execute_many(
+        (("write", {"value": 1}), ("write", {"value": 2})),
+        source=UntrustedSource.USER,
+    )
+
+    assert max_active == 1
+
+
+def test_tool_spec_rejects_parallel_side_effect_metadata() -> None:
+    with pytest.raises(ValueError, match="parallel_safe"):
+        ToolSpec(
+            name="unsafe", description="unsafe", input_schema={"type": "object"},
+            output_schema=None, handler=lambda _arguments: None,
+            risk=RiskLevel.CONFIRM, parallel_safe=True,
+        )
+
+
+def test_tool_spec_rejects_inconsistent_side_effect_class() -> None:
+    with pytest.raises(ValueError, match="disagree"):
+        ToolSpec(
+            name="inconsistent", description="inconsistent",
+            input_schema={"type": "object"}, output_schema=None,
+            handler=lambda _arguments: None, risk=RiskLevel.READ,
+            side_effects=False, side_effect_class=SideEffectClass.IRREVERSIBLE,
+        )
+
+
+def test_duplicate_parallel_safe_calls_are_serialized() -> None:
+    registry = ToolRegistry()
+    active = 0
+    max_active = 0
+
+    def handler(arguments):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        time.sleep(0.01)
+        active -= 1
+        return arguments
+
+    registry.register(ToolSpec(
+        name="read", description="read", input_schema={"type": "object"},
+        output_schema=None, handler=handler, risk=RiskLevel.READ,
+        read_only=True, idempotent=True, side_effects=False, parallel_safe=True,
+    ))
+    executor = ToolExecutor(registry, RecordingPolicy())  # type: ignore[arg-type]
+    executor.execute_many(
+        (("read", {"value": 1}), ("read", {"value": 1})),
+        source=UntrustedSource.USER,
+    )
+    assert max_active == 1
+
+
+def test_approval_and_handler_timing_are_reported_separately() -> None:
+    executor = build_executor(
+        lambda arguments: arguments,
+        RecordingPolicy(DecisionKind.CONFIRM),
+        confirmer=lambda _decision: True,
+    )
+    result = executor.execute(
+        "web_search", {"value": "x"}, source=UntrustedSource.USER
+    )
+    assert result.approval_started_at is not None
+    assert result.approval_finished_at is not None
+    assert result.handler_started_at is not None
+    assert result.approval_started_at <= result.approval_finished_at
+    assert result.approval_finished_at <= result.handler_started_at
 
 
 @pytest.mark.parametrize(

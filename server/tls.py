@@ -6,6 +6,8 @@ Personal/non-commercial use: generate a short-lived self-signed cert via the
 
 from __future__ import annotations
 
+import ipaddress
+import os
 import ssl
 import subprocess
 from dataclasses import dataclass
@@ -89,6 +91,12 @@ def generate_self_signed_cert(
         str(int(days)),
         "-subj",
         f"/CN={common_name}",
+        "-addext",
+        (
+            f"subjectAltName=IP:{common_name}"
+            if _is_ip_address(common_name)
+            else f"subjectAltName=DNS:{common_name}"
+        ),
     ]
     try:
         completed = subprocess.run(
@@ -107,12 +115,21 @@ def generate_self_signed_cert(
         raise TlsConfigError(f"openssl failed: {err or completed.returncode}")
     if not cert_path.is_file() or not key_path.is_file():
         raise TlsConfigError("openssl reported success but cert/key missing")
+    os.chmod(key_path, 0o600)
     return TlsMaterial(
         certfile=cert_path,
         keyfile=key_path,
         generated=True,
         message=f"Generated self-signed TLS material for CN={common_name}",
     )
+
+
+def _is_ip_address(value: str) -> bool:
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return True
 
 
 def ensure_tls_material(
@@ -177,3 +194,15 @@ __all__ = [
     "generate_self_signed_cert",
     "resolve_tls_paths",
 ]
+
+
+# E2E test compatibility: load_or_create_tls wrapper
+def load_or_create_tls(
+    repo_root: str | Path | None = None,
+    *,
+    generate: bool = False,
+) -> TlsMaterial:
+    """Create or load TLS material for E2E tests."""
+    from pathlib import Path as _Path
+    r = _Path(repo_root) if repo_root else None
+    return ensure_tls_material(repo_root=r, generate=generate)

@@ -52,6 +52,7 @@ class MicCapture:
         *,
         sample_rate: int = DEFAULT_SAMPLE_RATE,
         channels: int = DEFAULT_CHANNELS,
+        device: int | str | None = None,
         sounddevice_module: Any | None = None,
         recorder: Callable[..., Any] | None = None,
     ) -> None:
@@ -61,6 +62,7 @@ class MicCapture:
             raise ValueError("channels must be positive")
         self.sample_rate = sample_rate
         self.channels = channels
+        self.device = device
         self._sd = sounddevice_module
         self._recorder = recorder
 
@@ -93,6 +95,7 @@ class MicCapture:
                     samplerate=self.sample_rate,
                     channels=self.channels,
                     dtype=DEFAULT_DTYPE,
+                    device=self.device,
                 )
                 sd.wait()
             pcm = bytes(memoryview(data).cast("B")) if not isinstance(data, (bytes, bytearray)) else bytes(data)

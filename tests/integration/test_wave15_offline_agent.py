@@ -2,18 +2,27 @@
 
 import asyncio
 import time
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from agent.executor import AgentExecutor, execute_agent_loop, execute_plan
 from agent.observation import Observation, ObservationKind
 from agent.runtime import AgentLoop, AgentLoopResult, LoopBudget
 from agent.steering import SteeringKind, SteeringQueue, SteeringSignal
-from mark.safety import SafetyPolicy, UntrustedSource
-from mark.tools.builtin import build_builtin_registry
-from mark.tools.contracts import ToolResult
-from mark.tools.executor import ToolExecutor
+from acta.safety import SafetyPolicy, UntrustedSource
+from acta.tools.builtin import build_builtin_registry
+from acta.tools.contracts import ToolResult
+from acta.tools.executor import ToolExecutor
 from providers.contracts import ChatMessage, ChatRequest, ChatResponse, ModelInfo, ToolCall
+
+
+OFFLINE_MODEL = ModelInfo(
+    provider_id="offline_provider",
+    model_id="test_model",
+    display_name="Offline test model",
+    text=True,
+    tool_calling=True,
+)
 
 
 @pytest.mark.asyncio
@@ -56,6 +65,7 @@ async def test_offline_agent_multi_turn_tool_execution(tmp_path):
     tool_executor = ToolExecutor(registry, SafetyPolicy())
 
     result = await execute_agent_loop(
+        model=OFFLINE_MODEL,
         user_goal=f"Read and summarize {test_file}",
         provider=mock_provider,
         tool_executor=tool_executor,
@@ -119,6 +129,7 @@ async def test_offline_agent_tool_error_self_correction():
         return ToolResult(ok=True, code="ok", message="Fallback content read.")
 
     result = await execute_agent_loop(
+        model=OFFLINE_MODEL,
         user_goal="Read configuration file",
         provider=mock_provider,
         tool_executor=mock_tool_executor,
@@ -151,6 +162,7 @@ async def test_offline_agent_steering_interruption_cancel():
     mock_provider = MagicMock()
 
     result = await execute_agent_loop(
+        model=OFFLINE_MODEL,
         user_goal="Perform long autonomous operation",
         provider=mock_provider,
         steering_queue=steering_q,
@@ -201,6 +213,7 @@ async def test_offline_agent_steering_guidance_injection():
     )
 
     result = await execute_agent_loop(
+        model=OFFLINE_MODEL,
         user_goal="Process data",
         provider=mock_provider,
         tool_executor=lambda name, args: "done",
@@ -221,15 +234,16 @@ async def test_offline_agent_steering_guidance_injection():
 async def test_offline_agent_budget_enforcement_turns():
     """Verify budget max turns limit halts execution."""
     mock_provider = MagicMock()
-    mock_provider.chat.return_value = ChatResponse(
+    mock_provider.chat = AsyncMock(return_value=ChatResponse(
         text="Looping...",
         provider_id="offline",
         model_id="test",
         tool_calls=(ToolCall(id="c", name="dummy_tool", arguments={}),),
-    )
+    ))
 
     budget = LoopBudget(max_turns=3)
     result = await execute_agent_loop(
+        model=OFFLINE_MODEL,
         user_goal="Infinite loop goal",
         provider=mock_provider,
         tool_executor=lambda name, args: "ok",
@@ -244,7 +258,7 @@ async def test_offline_agent_budget_enforcement_turns():
 async def test_offline_agent_budget_enforcement_tool_calls():
     """Verify budget max tool calls limit halts execution."""
     mock_provider = MagicMock()
-    mock_provider.chat.return_value = ChatResponse(
+    mock_provider.chat = AsyncMock(return_value=ChatResponse(
         text="Executing multiple tools",
         provider_id="offline",
         model_id="test",
@@ -253,10 +267,11 @@ async def test_offline_agent_budget_enforcement_tool_calls():
             ToolCall(id="c2", name="t2", arguments={}),
             ToolCall(id="c3", name="t3", arguments={}),
         ),
-    )
+    ))
 
     budget = LoopBudget(max_tool_calls=2)
     result = await execute_agent_loop(
+        model=OFFLINE_MODEL,
         user_goal="Multi-tool call goal",
         provider=mock_provider,
         tool_executor=lambda name, args: "ok",
@@ -271,17 +286,18 @@ async def test_offline_agent_budget_enforcement_tool_calls():
 async def test_offline_agent_budget_enforcement_timeout():
     """Verify timeout limit halts execution."""
     mock_provider = MagicMock()
-    mock_provider.chat.return_value = ChatResponse(
+    mock_provider.chat = AsyncMock(return_value=ChatResponse(
         text="Slow task",
         provider_id="offline",
         model_id="test",
         tool_calls=(ToolCall(id="c1", name="t1", arguments={}),),
-    )
+    ))
 
     budget = LoopBudget(timeout_seconds=0.05)
     time.sleep(0.06)
 
     result = await execute_agent_loop(
+        model=OFFLINE_MODEL,
         user_goal="Timeout goal",
         provider=mock_provider,
         tool_executor=lambda name, args: "ok",
@@ -312,7 +328,7 @@ def test_offline_agent_legacy_execute_plan_intact(monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr(planner_mod, "create_plan", mock_create_plan)
 
-    def mock_call_tool(tool: str, params: dict, speak=None, intent=""):
+    def mock_call_tool(self, tool: str, params: dict, speak=None, *, intent=""):
         return "Search result output"
 
     monkeypatch.setattr(AgentExecutor, "_call_tool", mock_call_tool)

@@ -1,5 +1,10 @@
+from __future__ import annotations
+
 #web_search.py
 import json
+
+from i18n import t
+
 import sys
 from pathlib import Path
 
@@ -10,12 +15,13 @@ def _get_base_dir() -> Path:
 
 
 BASE_DIR        = _get_base_dir()
-API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
-
-
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    from config.secrets import get_secret
+
+    key = get_secret("gemini_api_key")
+    if key is None:
+        raise RuntimeError(t("error.gemini_key_missing"))
+    return key
 
 
 def _gemini_search(query: str) -> str:
@@ -35,7 +41,7 @@ def _gemini_search(query: str) -> str:
 
     text = text.strip()
     if not text:
-        raise ValueError("Gemini returned an empty response.")
+        raise ValueError(t("error.gemini_empty_response"))
     return text
 
 
@@ -107,15 +113,15 @@ def web_search(
     aspect = params.get("aspect", "general").strip() or "general"
 
     if not query and not items:
-        return "Please provide a search query, sir."
+        return "Введите запрос для поиска."
 
     if items and mode != "compare":
         mode = "compare"
 
     if player:
-        player.write_log(f"[Search] {query or ', '.join(items)}")
+        player.write_log(f"[Search] mode={mode}")
 
-    print(f"[WebSearch] 🔍 Query: {query!r}  Mode: {mode}")
+    print(f"[WebSearch] 🔍 query_length={len(query)} mode={mode}")
 # replace: result = _gemini_search(query) block with:
     try:
         from or_client import client

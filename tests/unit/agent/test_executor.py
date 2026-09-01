@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from agent.executor import AgentExecutor, ToolDeniedError, _call_tool
-from mark.safety import (
+from acta.safety import (
     DecisionKind,
     RiskLevel,
     SafetyDecision,
@@ -288,17 +288,22 @@ def test_executor_module_does_not_import_planner_at_load() -> None:
 
 @pytest.mark.asyncio
 async def test_execute_agent_loop_convenience_function() -> None:
-    from unittest.mock import MagicMock
+    from unittest.mock import AsyncMock, MagicMock
     from agent.executor import execute_agent_loop
     from agent.runtime import AgentLoopResult
-    from providers.contracts import ChatResponse
+    from providers.contracts import ChatResponse, ModelInfo
 
     mock_provider = MagicMock()
-    mock_provider.chat.return_value = ChatResponse(
+    mock_provider.chat = AsyncMock(return_value=ChatResponse(
         text="Loop answer", provider_id="test", model_id="test"
-    )
+    ))
 
-    res = await execute_agent_loop("test goal", provider=mock_provider)
+    model = ModelInfo(
+        provider_id="test", model_id="test", display_name="Test", text=True
+    )
+    res = await execute_agent_loop(
+        "test goal", model=model, provider=mock_provider
+    )
     assert isinstance(res, AgentLoopResult)
     assert res.ok is True
     assert res.final_answer == "Loop answer"
@@ -315,4 +320,3 @@ def test_execute_plan_convenience_function(monkeypatch: pytest.MonkeyPatch) -> N
     result = executor_mod.execute_plan("legacy goal")
     assert result == "Plan completed"
     mock_exec.execute.assert_called_once_with("legacy goal", speak=None, cancel_flag=None)
-

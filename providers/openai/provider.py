@@ -10,13 +10,14 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Mapping
 from typing import Any
 
-from providers.capabilities import require_capability
+from providers.capabilities import require_capability, require_provider_match
 from providers.contracts import (
     ChatEvent,
     ChatRequest,
     ChatResponse,
     ModelInfo,
     ProviderStatus,
+    ToolCall,
 )
 from providers.errors import ProviderAuthError
 from providers.openai.client import (
@@ -26,7 +27,12 @@ from providers.openai.client import (
     extract_delta_text,
     extract_message_text,
 )
-from providers.registry import register
+from providers.openai_compat import (
+    ToolCallStreamAssembler,
+    finish_reason,
+    message_payload,
+    parse_tool_calls,
+)
 
 PROVIDER_ID = "openai"
 
@@ -74,22 +80,33 @@ class OpenAIChatProvider:
         return ProviderStatus(provider_id=PROVIDER_ID, ok=True)
 
     async def chat(self, request: ChatRequest) -> ChatResponse:
+        require_provider_match(request.model, PROVIDER_ID)
         require_capability(request.model, request.role)
         payload = self._http().chat_completion(self._chat_body(request, stream=False))
         return ChatResponse(
             text=extract_message_text(payload),
             provider_id=PROVIDER_ID,
             model_id=request.model.model_id,
+            tool_calls=_tool_calls(payload),
         )
 
     async def stream(self, request: ChatRequest) -> AsyncIterator[ChatEvent]:
+        require_provider_match(request.model, PROVIDER_ID)
         require_capability(request.model, request.role)
+        assembler = ToolCallStreamAssembler(PROVIDER_ID)
         for event in self._http().stream_chat_completion(
             self._chat_body(request, stream=True)
         ):
             text = extract_delta_text(event)
             if text:
                 yield ChatEvent(type="delta", text=text)
+            assembler.add(event)
+            if finish_reason(event) == "tool_calls":
+                for call in assembler.finish():
+                    yield ChatEvent(type="tool_call", tool_call=call)
+        if assembler.pending:
+            for call in assembler.finish():
+                yield ChatEvent(type="tool_call", tool_call=call)
         yield ChatEvent(type="done")
 
     def _http(self) -> OpenAIHttpClient:
@@ -107,14 +124,34 @@ class OpenAIChatProvider:
         return self._client
 
     def _chat_body(self, request: ChatRequest, *, stream: bool) -> dict[str, Any]:
-        return {
+        body: dict[str, Any] = {
             "model": request.model.model_id,
-            "messages": [
-                {"role": message.role, "content": message.content}
-                for message in request.messages
-            ],
+            "messages": [message_payload(message) for message in request.messages],
             "stream": stream,
         }
+        if request.tools:
+            body["tools"] = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": dict(tool.parameters),
+                    },
+                }
+                for tool in request.tools
+            ]
+        if request.tool_choice is not None:
+            body["tool_choice"] = request.tool_choice
+        return body
+
+
+def _message_payload(message: Any) -> dict[str, Any]:
+    return message_payload(message)  # compatibility for tests/importers
+
+
+def _tool_calls(payload: object) -> tuple[ToolCall, ...]:
+    return parse_tool_calls(payload, PROVIDER_ID)
 
 
 def conservative_capabilities(model_id: str) -> dict[str, bool]:
@@ -143,6 +180,7 @@ def conservative_capabilities(model_id: str) -> dict[str, bool]:
         return flags
     flags["text"] = True
     flags["streaming"] = True
+    flags["tool_calling"] = True
     return flags
 
 
@@ -171,4 +209,3 @@ def _normalize_key(api_key: str | None) -> str | None:
     return stripped or None
 
 
-register("openai", OpenAIChatProvider)

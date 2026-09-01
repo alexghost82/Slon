@@ -1,6 +1,6 @@
 """Named secret storage via OS stores, with a 0600 file fallback.
 
-Supported names: ``gemini_api_key``, ``openrouter_api_key``, ``openai_api_key``.
+Supported names include provider keys and the local ``gateway_signing_key``.
 
 Resolution order:
 1. macOS Keychain through the ``security`` CLI, when available;
@@ -23,14 +23,24 @@ import tempfile
 from pathlib import Path
 
 KNOWN_SECRET_NAMES = frozenset(
-    {"gemini_api_key", "openrouter_api_key", "openai_api_key"}
+    {"gemini_api_key", "openrouter_api_key", "openai_api_key", "gateway_signing_key"}
 )
+PROVIDER_SECRET_NAMES = {
+    "gemini": "gemini_api_key",
+    "openrouter": "openrouter_api_key",
+    "openai": "openai_api_key",
+}
 SERVICE_NAME = "Slon"
 FALLBACK_PATH = Path(__file__).resolve().parent / "api_keys.json"
 
 
 class SecretStoreError(RuntimeError):
     """Secret store failure. Messages must never include secret values."""
+
+
+def get_provider_secret(provider_id: str) -> str | None:
+    """Return the API key for a provider ID used by the runtime router."""
+    return get_secret(PROVIDER_SECRET_NAMES.get(provider_id, provider_id))
 
 
 def get_secret(name: str) -> str | None:
@@ -247,6 +257,11 @@ def _file_get(name: str) -> str | None:
     path = FALLBACK_PATH
     if not path.is_file():
         return None
+    if os.name != "nt":
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            raise SecretStoreError(f"failed to secure secret file for {name}") from None
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):

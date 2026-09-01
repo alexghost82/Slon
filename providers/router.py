@@ -8,6 +8,7 @@ read ``api_keys.json`` and does not implement cost accounting.
 from __future__ import annotations
 
 import importlib
+import inspect
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import replace
 from typing import Protocol, runtime_checkable
@@ -108,36 +109,107 @@ class Router:
             )
         return await self._resolve(self.provider_id).validate()
 
-    async def chat(self, request: ChatRequest) -> ChatResponse:
+    async def list_models(self, provider_id: str | None = None) -> tuple[ModelInfo, ...]:
+        """Return canonical models for a provider without exposing its adapter."""
+        selected = provider_id or self.provider_id
+        configured = tuple(
+            model for model in self._models if model.provider_id == selected
+        )
+        if configured:
+            return configured
+        return tuple(await self._resolve(selected).list_models())
+
+    async def chat(
+        self,
+        request: ChatRequest,
+        *,
+        base_url: str | None = None,
+        timeout: float | None = None,
+    ) -> ChatResponse:
         request = self._route_request(request)
         self._require_request_capabilities(request)
         try:
-            return await self._resolve(request.model.provider_id).chat(request)
-        except Exception as exc:
+            response = await self._resolve(
+                request.model.provider_id, base_url=base_url, timeout=timeout
+            ).chat(request)
+        except ProviderError as exc:
             fallback_id = self._fallback_provider_id(request.model.provider_id, exc)
             if fallback_id is None:
                 raise
-            self._require_request_capabilities(request)
-            return await self._resolve(fallback_id).chat(request)
+            fallback_request = await self._fallback_request(request, fallback_id)
+            response = await self._resolve(
+                fallback_id, base_url=base_url, timeout=timeout
+            ).chat(fallback_request)
+            return self._validate_response(response, fallback_request)
+        return self._validate_response(response, request)
 
-    async def stream(self, request: ChatRequest) -> AsyncIterator[ChatEvent]:
+    async def stream(
+        self,
+        request: ChatRequest,
+        *,
+        base_url: str | None = None,
+        timeout: float | None = None,
+    ) -> AsyncIterator[ChatEvent]:
         request = self._route_request(request)
         self._require_request_capabilities(request)
         yielded = False
         try:
-            async for event in self._resolve(request.model.provider_id).stream(request):
+            async for event in self._resolve(
+                request.model.provider_id, base_url=base_url, timeout=timeout
+            ).stream(request):
                 yielded = True
                 yield _as_chat_event(event)
             return
-        except Exception as exc:
+        except ProviderError as exc:
             if yielded:
                 raise
             fallback_id = self._fallback_provider_id(request.model.provider_id, exc)
             if fallback_id is None:
                 raise
-        self._require_request_capabilities(request)
-        async for event in self._resolve(fallback_id).stream(request):
+        fallback_request = await self._fallback_request(request, fallback_id)
+        async for event in self._resolve(
+            fallback_id, base_url=base_url, timeout=timeout
+        ).stream(fallback_request):
             yield _as_chat_event(event)
+
+    async def _fallback_request(
+        self, request: ChatRequest, fallback_id: str
+    ) -> ChatRequest:
+        candidates = tuple(
+            model for model in self._models if model.provider_id == fallback_id
+        )
+        if not candidates:
+            candidates = tuple(await self._resolve(fallback_id).list_models())
+        required = ("text", "tool_calling") if request.tools else ()
+        model = select_model(
+            candidates,
+            routing_mode="manual",
+            configured_provider_id=fallback_id,
+            required_role=request.role,
+            required_capabilities=required,
+            availability=self._model_availability,
+            network_mode=self.network_mode,
+            privacy_profile=self.privacy_profile,
+        )
+        fallback_request = replace(request, model=model)
+        self._require_request_capabilities(fallback_request)
+        return fallback_request
+
+    @staticmethod
+    def _validate_response(
+        response: ChatResponse, request: ChatRequest
+    ) -> ChatResponse:
+        if not (hasattr(response, "text") and hasattr(response, "tool_calls") and hasattr(response, "provider_id") and hasattr(response, "model_id")):
+            raise ProviderError("provider returned an invalid chat response")
+        if (
+            response.provider_id != request.model.provider_id
+            or response.model_id != request.model.model_id
+        ):
+            raise ProviderError(
+                "provider response does not match the selected model",
+                provider_id=request.model.provider_id,
+            )
+        return response
 
     @staticmethod
     def _require_request_capabilities(request: ChatRequest) -> None:
@@ -156,7 +228,9 @@ class Router:
             return False
         return provider_id not in CLOUD_PROVIDER_IDS or not self._cloud_restricted()
 
-    def _route_request(self, request: ChatRequest) -> ChatRequest:
+    def _route_request(
+        self, request: ChatRequest, *, base_url: str | None = None
+    ) -> ChatRequest:
         if self.routing_mode is None:
             return request
         candidates = self._models or (request.model,)
@@ -218,7 +292,13 @@ class Router:
             return None
         return nxt
 
-    def _resolve(self, provider_id: str) -> ChatProvider:
+    def _resolve(
+        self,
+        provider_id: str,
+        *,
+        base_url: str | None = None,
+        timeout: float | None = None,
+    ) -> ChatProvider:
         if not self._cloud_allowed(provider_id):
             raise ProviderError(
                 self._cloud_forbidden_message(provider_id),
@@ -236,19 +316,29 @@ class Router:
                 "missing api key",
                 provider_id=provider_id,
             )
-        instance = self._build_from_factory(provider_id)
+        instance = self._build_from_factory(
+            provider_id, base_url=base_url, timeout=timeout
+        )
         self._resolved[provider_id] = instance
         return instance
 
-    def _build_from_factory(self, provider_id: str) -> ChatProvider:
+    def _build_from_factory(
+        self,
+        provider_id: str,
+        *,
+        base_url: str | None = None,
+        timeout: float | None = None,
+    ) -> ChatProvider:
         factory = _factory_for(provider_id)
+        params: dict[str, object] = {}
         key = self._lookup_key(provider_id)
-        if key is not None:
-            try:
-                return factory(api_key=key)
-            except TypeError:
-                pass
-        return factory()
+        if key is not None and "api_key" in inspect.signature(factory).parameters:
+            params["api_key"] = key
+        if base_url is not None and "base_url" in inspect.signature(factory).parameters:
+            params["base_url"] = base_url
+        if timeout is not None and "timeout" in inspect.signature(factory).parameters:
+            params["timeout"] = timeout
+        return factory(**params)
 
 
 def _factory_for(provider_id: str):
@@ -265,10 +355,6 @@ def _factory_for(provider_id: str):
 def _as_chat_event(event: object) -> ChatEvent:
     if isinstance(event, ChatEvent):
         return event
-    event_type = getattr(event, "type", None)
-    text = getattr(event, "text", "")
-    if event_type in {"delta", "done"} and isinstance(text, str):
-        return ChatEvent(type=event_type, text=text)
     raise ProviderError("provider stream emitted an unsupported event")
 
 

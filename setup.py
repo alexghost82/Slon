@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from i18n import t
 import subprocess
 import sys
 from pathlib import Path
@@ -28,13 +29,13 @@ def main() -> None:
     root = Path(__file__).resolve().parent
     req_name = requirements_file_for_os()
     req_path = root / req_name
-    print(f"Installing requirements from {req_name}...")
+    print(t("actions.installing_reqs", req_name=req_name))
     subprocess.run(
         [sys.executable, "-m", "pip", "install", "-r", str(req_path)],
         check=True,
     )
 
-    print("Installing Playwright browsers...")
+    print(t("actions.installing_playwright"))
     subprocess.run([sys.executable, "-m", "playwright", "install"], check=True)
 
     print("\n✅ Setup complete! Run 'python main.py' to start Slon.")

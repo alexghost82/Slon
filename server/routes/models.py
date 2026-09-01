@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Mapping
+from collections.abc import Mapping
 
 from server.routes._common import (
     DevicePrincipal,
@@ -28,14 +28,7 @@ class ModelStore:
 
     def __init__(self, models: tuple[ModelInfo, ...] | None = None) -> None:
         if models is None:
-            models = (
-                ModelInfo(
-                    id="mock-model",
-                    provider_id="local",
-                    display_name="Mock Local",
-                    active=True,
-                ),
-            )
+            models = ()
         self._models: dict[str, ModelInfo] = {m.id: m for m in models}
 
     def list_models(self) -> tuple[ModelInfo, ...]:

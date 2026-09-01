@@ -1,9 +1,14 @@
+from __future__ import annotations
+
 # actions/send_message.py
 # Universal messaging — WhatsApp & Instagram
 # Uses visual element detection (pyautogui + screen search) instead of
 # hardcoded tab/click sequences — works on any screen resolution.
 
 import time
+
+from i18n import t
+
 import pyautogui
 from pathlib import Path
 

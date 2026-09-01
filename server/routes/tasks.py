@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Mapping
+from collections.abc import Mapping
 from urllib.parse import unquote
 
 from server.routes._common import (
@@ -161,7 +161,7 @@ class TasksHandler:
         def _cancel() -> RouteResponse:
             info = self.store.cancel(resolved_id, approval_required=True)
             if info is None:
-                return error_response(404, CODE_NOT_FOUND, "Task not found.")
+                return error_response(404, CODE_NOT_FOUND, "Задача не найдена.")
             return RouteResponse(status_code=202, body=sanitize_body(info.to_dict()))
 
         return self._idempotency.run(

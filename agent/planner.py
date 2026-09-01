@@ -3,8 +3,9 @@ import re
 import sys
 from pathlib import Path
 
-from mark.tools.builtin import build_builtin_registry
-from mark.tools.registry import ToolRegistry
+from i18n import t
+from acta.tools.builtin import build_builtin_registry
+from acta.tools.registry import ToolRegistry
 
 
 def get_base_dir() -> Path:
@@ -13,8 +14,7 @@ def get_base_dir() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
-BASE_DIR        = get_base_dir()
-API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
+BASE_DIR = get_base_dir()
 
 
 PLANNER_PROMPT = """You are the planning module of Slon, a personal AI assistant.
@@ -68,8 +68,12 @@ def _system_instruction(registry: ToolRegistry | None) -> str:
 
 
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    from config.secrets import get_secret
+
+    key = get_secret("gemini_api_key")
+    if key is None:
+        raise RuntimeError(t("error.gemini_key_missing"))
+    return key
 
 
 def create_plan(
@@ -98,7 +102,7 @@ def create_plan(
         plan = json.loads(text)
 
         if "steps" not in plan or not isinstance(plan["steps"], list):
-            raise ValueError("Invalid plan structure")
+            raise ValueError(t("error.invalid_plan_structure"))
 
         for step in plan["steps"]:
             if step.get("tool") in ("generated_code",):
@@ -110,22 +114,22 @@ def create_plan(
                 step["tool"] = "web_search"
                 step["parameters"] = {"query": desc[:200]}
 
-        print(f"[Planner] ✅ Plan: {len(plan['steps'])} steps")
+        print(t("planner.plan_created", n=len(plan["steps"])))
         for s in plan["steps"]:
-            print(f"  Step {s['step']}: [{s['tool']}] {s['description']}")
+            print(f"  {t("planner.plan_step", step=s["step"], tool=s["tool"], desc=s['description'])}")
 
         return plan
 
     except json.JSONDecodeError as e:
-        print(f"[Planner] ⚠️ JSON parse failed: {e}")
+        print(t("planner.plan_json_failed", e=str(e)))
         return _fallback_plan(goal)
     except Exception as e:
-        print(f"[Planner] ⚠️ Planning failed: {e}")
+        print(t("planner.plan_failed", e=str(e)))
         return _fallback_plan(goal)
 
 
 def _fallback_plan(goal: str) -> dict:
-    print("[Planner] 🔄 Fallback plan")
+    print(t("planner.fallback_plan"))
     return {
         "goal": goal,
         "steps": [
@@ -181,8 +185,8 @@ Create a REVISED plan for the remaining work only. Do not repeat completed steps
                 step["tool"] = "web_search"
                 step["parameters"] = {"query": step.get("description", goal)[:200]}
 
-        print(f"[Planner] 🔄 Revised plan: {len(plan['steps'])} steps")
+        print(t("planner.plan_revised", n=len(plan["steps"])))
         return plan
     except Exception as e:
-        print(f"[Planner] ⚠️ Replan failed: {e}")
+        print(t("planner.replan_failed", e=str(e)))
         return _fallback_plan(goal)

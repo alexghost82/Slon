@@ -1,4 +1,9 @@
+from __future__ import annotations
+
 import os
+
+from i18n import t
+
 import re
 import sys
 import json
@@ -493,7 +498,7 @@ def _handle_install_dialog(game_name: str) -> str:
                 break
 
         if not dialog:
-            raise RuntimeError("Dialog not found")
+            raise RuntimeError(t("error.dialog_not_found"))
 
         dialog.set_focus()
         time.sleep(0.4)

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # actions/code_helper.py
 # AI-powered code assistant — writes, edits, explains, runs, builds, debugs, and optimizes code.
 #
@@ -12,6 +14,9 @@
 #   auto         → (default) Intent auto-detected from context
 
 import subprocess
+
+from i18n import t
+
 import sys
 import json
 import re
@@ -25,15 +30,18 @@ def get_base_dir():
     return Path(__file__).resolve().parent.parent
 
 BASE_DIR           = get_base_dir()
-API_CONFIG_PATH    = BASE_DIR / "config" / "api_keys.json"
 DESKTOP            = Path.home() / "Desktop"
 MAX_BUILD_ATTEMPTS = 3
 GEMINI_MODEL       = "gemini-2.5-flash"
 
 
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    from config.secrets import get_secret
+
+    key = get_secret("gemini_api_key")
+    if key is None:
+        raise RuntimeError(t("error.gemini_key_missing"))
+    return key
 
 
 def _get_gemini(model: str = GEMINI_MODEL):

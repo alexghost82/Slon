@@ -1,4 +1,3 @@
-import json
 import sys
 import threading
 from collections.abc import Callable
@@ -7,17 +6,20 @@ from pathlib import Path
 from typing import Any
 
 from agent.runtime import AgentLoop, AgentLoopResult, LoopBudget
+from i18n import t
+
 from agent.steering import SteeringQueue
-from mark.safety import (
+from acta.safety import (
     SafetyDecision,
     SafetyPolicy,
     SafetyPolicyError,
     UnknownToolError,
     UntrustedSource,
 )
-from mark.tools import ToolExecutor, ToolRegistry, ToolResult
-from mark.tools.builtin import build_builtin_registry
-from mark.tools.legacy.adapters import with_legacy_speak
+from acta.tools import ToolExecutor, ToolRegistry, ToolResult
+from acta.tools.builtin import build_builtin_registry
+from acta.tools.legacy.adapters import with_legacy_speak
+from providers.contracts import ModelInfo
 
 
 def get_base_dir() -> Path:
@@ -27,7 +29,6 @@ def get_base_dir() -> Path:
 
 
 BASE_DIR = get_base_dir()
-API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 
 class ToolDeniedError(SafetyPolicyError):
     """authorize returned deny, or required confirmation was not granted."""
@@ -42,13 +43,11 @@ class ToolDeniedError(SafetyPolicyError):
 
 def _get_api_key() -> str:
     """Lazy helper for leftover translate/summarize paths. Not used for tools."""
-    if not API_CONFIG_PATH.is_file():
-        raise FileNotFoundError("API key file is not available.")
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    key = data.get("gemini_api_key")
-    if not isinstance(key, str) or not key.strip():
-        raise RuntimeError("Gemini API key is not configured.")
+    from config.secrets import get_secret
+
+    key = get_secret("gemini_api_key")
+    if key is None:
+        raise RuntimeError(t("error.gemini_key_missing"))
     return key
 
 
@@ -71,7 +70,7 @@ def _inject_context(
                 combined = "\n\n---\n\n".join(all_results)
                 translated = _translate_to_goal_language(combined, goal)
                 params["content"] = translated
-                print("[Executor] 💉 Injected + translated content")
+                print(t("actions.injecting_translated"))
 
     return params
 
@@ -103,7 +102,7 @@ def _translate_to_goal_language(content: str, goal: str) -> str:
         model = genai.GenerativeModel("gemini-2.5-flash")
 
         target_lang = _detect_language(goal)
-        print(f"[Executor] 🌐 Translating to: {target_lang}")
+        print(t("actions.translating_to", lang=target_lang))
 
         prompt = (
             f"You are a professional translator. "
@@ -117,10 +116,10 @@ def _translate_to_goal_language(content: str, goal: str) -> str:
         )
         response = model.generate_content(prompt)
         translated = response.text.strip()
-        print(f"[Executor] ✅ Translation done ({target_lang})")
+        print(t("actions.translation_done", lang=target_lang))
         return translated
     except Exception as e:
-        print(f"[Executor] ⚠️ Translation failed: {e}")
+        print(t("actions.translation_failed", e=str(e)))
         return content
 
 
@@ -145,11 +144,11 @@ def _legacy_result(tool: str, result: ToolResult) -> str:
             raise ToolDeniedError(tool, result.message)
         if result.code == "unknown_tool":
             raise UnknownToolError(tool)
-        raise RuntimeError(result.message or f"Tool execution failed ({result.code}).")
+        raise RuntimeError(t("error.tool_execution_failed", code=str(result.code)) + (": " + result.message if result.message else ""))
     if result.message:
         return result.message
     if result.data is None:
-        return "Done."
+        return "Готово."
     if isinstance(result.data, str):
         return result.data
     return str(result.data)
@@ -225,7 +224,7 @@ class AgentExecutor:
         from agent.error_handler import ErrorDecision, analyze_error, generate_fix
         from agent.planner import create_plan, replan
 
-        print(f"\n[Executor] 🎯 Goal: {goal}")
+        print(f"\n[Executor] {goal}")
 
         replan_attempts = 0
         completed_steps = []
@@ -248,8 +247,8 @@ class AgentExecutor:
             for step in steps:
                 if cancel_flag and cancel_flag.is_set():
                     if speak:
-                        speak("Task cancelled, sir.")
-                    return "Task cancelled."
+                        speak("Задача отменена.")
+                    return "Задача отменена."
 
                 step_num = step.get("step", "?")
                 tool = step.get("tool") or ""
@@ -258,7 +257,7 @@ class AgentExecutor:
 
                 params = _inject_context(params, tool, step_results, goal=goal)
 
-                print(f"\n[Executor] ▶️ Step {step_num}: [{tool}] {desc}")
+                print(f"\n[Executor] {t("planner.plan_step", step=step_num, tool=tool, desc=desc)}")
 
                 attempt = 1
                 step_ok = False
@@ -297,7 +296,7 @@ class AgentExecutor:
                             continue
 
                         elif decision == ErrorDecision.SKIP:
-                            print(f"[Executor] ⏭️ Skipping step {step_num}")
+                            print(f"[Executor] {t("actions.skipping_step", step=step_num)}")
                             completed_steps.append(step)
                             step_ok = True
                             break
@@ -316,7 +315,7 @@ class AgentExecutor:
                                         step, error_msg, fix_suggestion
                                     )
                                     if speak:
-                                        speak("Trying an alternative approach, sir.")
+                                        speak("Пробую альтернативный подход.")
                                     res = self._call_tool(
                                         fixed_step["tool"],
                                         fixed_step["parameters"],
@@ -328,7 +327,7 @@ class AgentExecutor:
                                     step_ok = True
                                     break
                                 except Exception as fix_err:
-                                    print(f"[Executor] ⚠️ Fix failed: {fix_err}")
+                                    print(f"[Executor] {t("actions.fix_failed", err=str(fix_err))}")
 
                             failed_step = step
                             failed_error = error_msg
@@ -353,7 +352,7 @@ class AgentExecutor:
                 return msg
 
             if speak:
-                speak("Adjusting my approach, sir.")
+                speak("Корректирую подход.")
 
             replan_attempts += 1
             plan = replan(goal, completed_steps, failed_step, failed_error)
@@ -391,6 +390,8 @@ class AgentExecutor:
 
 async def execute_agent_loop(
     user_goal: str,
+    *,
+    model: ModelInfo,
     provider: Any = None,
     tool_executor: Any = None,
     budget: LoopBudget | None = None,
@@ -401,6 +402,7 @@ async def execute_agent_loop(
         provider=provider,
         tool_executor=tool_executor,
         budget=budget,
+        model=model,
     )
     return await loop.run(user_goal=user_goal, steering_queue=steering_queue)
 
@@ -413,4 +415,3 @@ def execute_plan(
     """Legacy plan-step execution helper function using AgentExecutor."""
     executor = AgentExecutor()
     return executor.execute(goal, speak=speak, cancel_flag=cancel_flag)
-

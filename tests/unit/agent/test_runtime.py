@@ -3,7 +3,7 @@
 import asyncio
 import time
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from agent.observation import Observation, ObservationKind
 from agent.runtime import (
@@ -14,8 +14,29 @@ from agent.runtime import (
     LoopDetector,
 )
 from agent.steering import SteeringKind, SteeringQueue, SteeringSignal
-from mark.tools.contracts import ToolResult
-from providers.contracts import ChatResponse, ToolCall
+from acta.tools.contracts import ToolResult
+from providers.contracts import (
+    AssistantToolCallMessage,
+    ChatRequest,
+    ChatResponse,
+    ModelInfo,
+    ToolCall,
+    ToolResultMessage,
+)
+
+
+MODEL = ModelInfo(
+    provider_id="test",
+    model_id="test-model",
+    display_name="Test model",
+    text=True,
+    tool_calling=True,
+)
+
+
+def test_agent_loop_requires_explicit_selected_model() -> None:
+    with pytest.raises(TypeError, match="model"):
+        AgentLoop(provider=MagicMock())  # type: ignore[call-arg]
 
 
 def test_loop_budget_defaults_and_is_exceeded():
@@ -50,6 +71,71 @@ def test_loop_budget_defaults_and_is_exceeded():
     exceeded, reason = budget.is_exceeded()
     assert exceeded is True
     assert "timeout" in reason.lower()
+
+
+@pytest.mark.parametrize("limit", [0, 1, 4])
+def test_loop_budget_allows_exactly_n_completed_calls(limit: int) -> None:
+    budget = LoopBudget(max_tool_calls=limit)
+    for completed in range(limit):
+        budget.tool_call_count = completed
+        assert budget.is_exceeded()[0] is False
+    budget.tool_call_count = limit
+    assert budget.is_exceeded()[0] is True
+
+
+@pytest.mark.asyncio
+async def test_native_tool_result_keeps_correlation_id() -> None:
+    requests: list[ChatRequest] = []
+    responses = [
+        ChatResponse(
+            text="",
+            provider_id="test",
+            model_id="test-model",
+            tool_calls=(ToolCall("call-42", "read_file", {"path": "x"}),),
+        ),
+        ChatResponse("done", "test", "test-model"),
+    ]
+
+    async def chat(request: ChatRequest) -> ChatResponse:
+        requests.append(request)
+        return responses.pop(0)
+
+    provider = MagicMock()
+    provider.chat.side_effect = chat
+    result = await AgentLoop(
+        provider=provider,
+        tool_executor=lambda _name, _args: "contents",
+        model=MODEL,
+    ).run("read")
+
+    assert result.ok
+    assert requests[1].messages[-2].role == "assistant"
+    assert isinstance(requests[1].messages[-2], AssistantToolCallMessage)
+    assert requests[1].messages[-2].tool_calls[0].id == "call-42"
+    tool_result = requests[1].messages[-1]
+    assert isinstance(tool_result, ToolResultMessage)
+    assert tool_result.role == "tool"
+    assert tool_result.tool_call_id == "call-42"
+    assert tool_result.name == "read_file"
+    assert tool_result.result == "contents"
+
+
+@pytest.mark.asyncio
+async def test_provider_wait_is_actively_timed_out() -> None:
+    async def chat(_request: ChatRequest) -> ChatResponse:
+        await asyncio.sleep(1)
+        return ChatResponse("late", "test", "test-model")
+
+    provider = MagicMock()
+    provider.chat.side_effect = chat
+    result = await AgentLoop(
+        provider=provider,
+        model=MODEL,
+        budget=LoopBudget(timeout_seconds=0.01),
+    ).run("wait")
+
+    assert result.ok is False
+    assert "timeout" in result.reason.lower()
 
 
 def test_loop_detector_consecutive_calls():
@@ -130,11 +216,11 @@ def test_agent_loop_dataclasses():
 async def test_agent_loop_single_turn_text_response():
     """Verify AgentLoop completes on first turn when model returns text only."""
     mock_provider = MagicMock()
-    mock_provider.chat.return_value = ChatResponse(
+    mock_provider.chat = AsyncMock(return_value=ChatResponse(
         text="Hello user!", provider_id="test", model_id="test"
-    )
+    ))
 
-    loop = AgentLoop(provider=mock_provider)
+    loop = AgentLoop(provider=mock_provider, model=MODEL)
     result = await loop.run("Say hello")
 
     assert result.ok is True
@@ -176,7 +262,7 @@ async def test_agent_loop_multi_turn_tool_execution():
     def mock_executor(tool_name, args):
         return ToolResult(ok=True, code="ok", message="File contents: hello world")
 
-    loop = AgentLoop(provider=mock_provider, tool_executor=mock_executor)
+    loop = AgentLoop(provider=mock_provider, tool_executor=mock_executor, model=MODEL)
     result = await loop.run("Read file /tmp/test.txt")
 
     assert result.ok is True
@@ -216,7 +302,7 @@ async def test_agent_loop_tool_error_self_correction():
     def mock_executor(tool_name, args):
         raise RuntimeError("Disk full")
 
-    loop = AgentLoop(provider=mock_provider, tool_executor=mock_executor)
+    loop = AgentLoop(provider=mock_provider, tool_executor=mock_executor, model=MODEL)
     result = await loop.run("Run command")
 
     assert result.ok is True
@@ -250,6 +336,7 @@ async def test_agent_loop_budget_exceeded():
 
     budget = LoopBudget(max_turns=3, max_tool_calls=15)
     loop = AgentLoop(
+        model=MODEL,
         provider=mock_provider,
         tool_executor=lambda name, args: "ok",
         budget=budget,
@@ -264,17 +351,18 @@ async def test_agent_loop_budget_exceeded():
 async def test_agent_loop_loop_detector_halt():
     """Verify loop halts when LoopDetector detects identical repeated calls."""
     mock_provider = MagicMock()
-    mock_provider.chat.return_value = ChatResponse(
+    mock_provider.chat = AsyncMock(return_value=ChatResponse(
         text="",
         provider_id="test",
         model_id="test",
         tool_calls=(
             ToolCall(id="call_rep", name="repeat_tool", arguments={"key": "val"}),
         ),
-    )
+    ))
 
     detector = LoopDetector(max_consecutive=3)
     loop = AgentLoop(
+        model=MODEL,
         provider=mock_provider,
         tool_executor=lambda name, args: "same output",
         loop_detector=detector,
@@ -292,7 +380,7 @@ async def test_agent_loop_steering_cancellation():
     steering_q.push(SteeringSignal(kind=SteeringKind.SYSTEM_CANCEL, text="User cancelled"))
 
     mock_provider = MagicMock()
-    loop = AgentLoop(provider=mock_provider)
+    loop = AgentLoop(provider=mock_provider, model=MODEL)
 
     result = await loop.run("Long task", steering_queue=steering_q)
 

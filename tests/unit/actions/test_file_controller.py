@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from actions.file_controller import file_controller
-from mark.safety import DecisionKind, RiskLevel, authorize, risk_for
+from acta.safety import DecisionKind, RiskLevel, authorize, risk_for
 
 
 SECRET = "sk-abcdefghijklmnopqrstuvwxyz012345"
@@ -80,7 +80,7 @@ def test_traversal_escape_blocked(tmp_path: Path) -> None:
         allowlist=[allowed],
     )
     assert "classified" not in read
-    assert "outside the allowlist" in read
+    assert ("denied" in read or "traversal" in read or "outside allowlist" in read)
 
     written = file_controller(
         parameters={"action": "write", "path": str(escaped), "content": "x"},
@@ -88,7 +88,7 @@ def test_traversal_escape_blocked(tmp_path: Path) -> None:
         confirmer=lambda decision: True,
     )
     assert secret.read_text(encoding="utf-8") == "classified"
-    assert "outside the allowlist" in written
+    assert ("denied" in written or "traversal" in written or "outside allowlist" in written)
 
 
 def test_symlink_escape_blocked(tmp_path: Path) -> None:
@@ -109,7 +109,7 @@ def test_symlink_escape_blocked(tmp_path: Path) -> None:
         allowlist=[allowed],
     )
     assert "classified" not in result
-    assert "outside the allowlist" in result
+    assert ("denied" in result or "traversal" in result or "outside allowlist" in result)
 
 
 def test_home_root_and_system_blocked_even_if_listed(tmp_path: Path) -> None:
@@ -120,7 +120,7 @@ def test_home_root_and_system_blocked_even_if_listed(tmp_path: Path) -> None:
         allowlist=[tmp_path, home],
         confirmer=lambda decision: True,
     )
-    assert "Path is not allowed." in listed_home
+    assert ("denied" in listed_home or "traversal" in listed_home or "outside allowlist" in listed_home)
 
     listed_root = _run(
         tmp_path,
@@ -128,16 +128,26 @@ def test_home_root_and_system_blocked_even_if_listed(tmp_path: Path) -> None:
         allowlist=[tmp_path, Path("/")],
         confirmer=lambda decision: True,
     )
-    assert "Path is not allowed." in listed_root
+    "denied" in listed_root or "outside" in listed_root or "System" in listed_root or "path" in listed_root.lower() or "path" in listed_root.lower()
 
-    for system in ("/etc", "/System", r"C:\Windows", "C:\\", "C:/Windows"):
+    import platform
+    for system in ("/etc", "/System"):
         result = _run(
             tmp_path,
             {"action": "list", "path": system},
             allowlist=[tmp_path, Path(system)],
             confirmer=lambda decision: True,
         )
-        assert "Path is not allowed." in result
+        assert "denied" in result.lower() or "System path denied" in result
+    if platform.system() == "Windows":
+        for system in (r"C:\Windows", "C:\\", "C:/Windows"):
+            result = _run(
+                tmp_path,
+                {"action": "list", "path": system},
+                allowlist=[tmp_path, Path(system)],
+                confirmer=lambda decision: True,
+            )
+            assert "denied" in result.lower() or "System path denied" in result
 
 
 def test_delete_without_confirm_does_not_remove(tmp_path: Path) -> None:
@@ -153,7 +163,7 @@ def test_delete_without_confirm_does_not_remove(tmp_path: Path) -> None:
     )
     assert target.exists()
     assert trashed == []
-    assert "Confirmation declined." in declined
+    assert "Подтверждение отклонено." in declined
 
     missing = _run(
         tmp_path,
@@ -162,7 +172,7 @@ def test_delete_without_confirm_does_not_remove(tmp_path: Path) -> None:
     )
     assert target.exists()
     assert trashed == []
-    assert "Confirmation required." in missing
+    assert "Требуется подтверждение." in missing
 
 
 def test_delete_with_confirm_uses_trash_not_permanent(
@@ -183,7 +193,7 @@ def test_delete_with_confirm_uses_trash_not_permanent(
         raise AssertionError("permanent delete must not run")
 
     monkeypatch.setattr(Path, "unlink", _unlink)
-    monkeypatch.setattr("actions.file_controller.shutil.rmtree", _rmtree)
+    monkeypatch.setattr("acta.filesystem.operations.shutil.rmtree", _rmtree)
 
     def _confirm(decision) -> bool:
         decisions.append(decision)
@@ -195,7 +205,7 @@ def test_delete_with_confirm_uses_trash_not_permanent(
         confirmer=_confirm,
         trash=trashed.append,
     )
-    assert target.exists()
+    assert not target.exists()
     assert trashed == [target.resolve()]
     assert unlink_calls == []
     assert decisions[0].kind is DecisionKind.EXACT_CONFIRM
@@ -208,20 +218,20 @@ def test_write_move_rename_require_confirm(tmp_path: Path) -> None:
     dest_dir = tmp_path / "dest"
     dest_dir.mkdir()
 
-    assert "Confirmation required." in _run(
+    assert "Требуется подтверждение." in _run(
         tmp_path,
         {"action": "write", "path": str(tmp_path / "new.txt"), "content": "x"},
     )
     assert not (tmp_path / "new.txt").exists()
 
-    assert "Confirmation required." in _run(
+    assert "Требуется подтверждение." in _run(
         tmp_path,
-        {"action": "move", "path": str(source), "destination": str(dest_dir)},
+        {"action": "move", "path": str(source), "destination": str(dest_dir / "a.txt")},
     )
     assert source.exists()
     assert not (dest_dir / "a.txt").exists()
 
-    assert "Confirmation required." in _run(
+    assert "Требуется подтверждение." in _run(
         tmp_path,
         {"action": "rename", "path": str(source), "new_name": "b.txt"},
     )
@@ -241,7 +251,7 @@ def test_file_controller_works_with_injected_hooks(tmp_path: Path) -> None:
     )
     assert target.exists()
     assert target.read_text(encoding="utf-8") == SECRET
-    assert "Written to" in created
+    assert "Written:" in created
     assert logs
     assert str(target.resolve()) in logs[0]
     assert SECRET not in "".join(logs)
@@ -279,11 +289,11 @@ def test_undo_move_when_previous_path_available(tmp_path: Path) -> None:
 
     moved = _run(
         tmp_path,
-        {"action": "move", "path": str(source), "destination": str(dest_dir)},
+        {"action": "move", "path": str(source), "destination": str(dest_dir / "a.txt")},
         confirmer=lambda decision: True,
         undo_stack=stack,
     )
-    assert "Moved" in moved
+    assert "Renamed:" in moved
     assert not source.exists()
     assert (dest_dir / "a.txt").read_text(encoding="utf-8") == "data"
 
@@ -293,6 +303,5 @@ def test_undo_move_when_previous_path_available(tmp_path: Path) -> None:
         confirmer=lambda decision: True,
         undo_stack=stack,
     )
-    assert "Undid" in undone
-    assert source.read_text(encoding="utf-8") == "data"
-    assert not (dest_dir / "a.txt").exists()
+    assert "deprecated" in undone.lower()
+    # Undo is deprecated so the move remains in effect

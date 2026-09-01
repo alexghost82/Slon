@@ -1,4 +1,9 @@
+from __future__ import annotations
+
 import subprocess
+
+from i18n import t
+
 import sys
 import json
 import re
@@ -13,15 +18,18 @@ def get_base_dir():
 
 
 BASE_DIR         = get_base_dir()
-API_CONFIG_PATH  = BASE_DIR / "config" / "api_keys.json"
 PROJECTS_DIR     = Path.home() / "Desktop" / "SlonProjects"
 MAX_FIX_ATTEMPTS = 5
 MODEL_PLANNER    = "gemini-2.5-flash"
 MODEL_WRITER     = "gemini-2.5-flash"
 
 def _get_api_key() -> str:
-    with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["gemini_api_key"]
+    from config.secrets import get_secret
+
+    key = get_secret("gemini_api_key")
+    if key is None:
+        raise RuntimeError(t("error.gemini_key_missing"))
+    return key
 
 
 def _get_model(model_name: str):
@@ -139,7 +147,7 @@ JSON:"""
         raw = _strip_fences(response.text)
         return json.loads(raw)
     except json.JSONDecodeError as e:
-        raise ValueError(f"Planner returned invalid JSON: {e}\nRaw: {response.text[:300]}")
+        raise ValueError(t("planner.plan_json_failed", e=str(e)))
     except Exception as e:
         if _is_rate_limit(e):
             raise RateLimitError(str(e))

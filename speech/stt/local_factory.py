@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from speech.stt.engines import EmptySTTEngine, try_whisper_engine
+from speech.stt.engines import EmptySTTEngine, try_faster_whisper_engine, try_whisper_engine
 from speech.stt.mic import MicCapture, MicCaptureError
 from speech.stt.provider import DEFAULT_LANGUAGE, LocalSTTProvider
 
@@ -30,6 +30,8 @@ def try_build_local_stt(
     repo_root: str | Path | None = None,  # noqa: ARG001 — reserved for model dirs
     language: str = DEFAULT_LANGUAGE,
     is_assistant_speaking: SpeakingFlag | None = None,
+    stt_engine: str = "faster_whisper",
+    mic_device: int | str | None = None,
     prefer_whisper: bool = True,
     require_mic: bool = False,
 ) -> LocalSTTBuildResult:
@@ -39,12 +41,35 @@ def try_build_local_stt(
     ``mic_ready`` is False but a provider may still exist for injected audio.
     """
     _ = repo_root
+    if stt_engine == "no":
+        return LocalSTTBuildResult(
+            provider=None,
+            mic=None,
+            ready=False,
+            mic_ready=False,
+            message="local STT disabled by settings",
+            asr_backend="disabled",
+        )
+
     asr_backend = "empty"
     engine: object
-    whisper = try_whisper_engine() if prefer_whisper else None
-    if whisper is not None:
-        engine = whisper
-        asr_backend = "whisper"
+    model_path = Path(repo_root or Path.cwd()) / "models" / "whisper" / "base"
+    if stt_engine == "whisper":
+        whisper = try_whisper_engine(str(model_path) if model_path.is_dir() else "base")
+        if whisper is not None:
+            engine = whisper
+            asr_backend = "whisper"
+        else:
+            engine = EmptySTTEngine()
+    elif stt_engine == "faster_whisper" and prefer_whisper:
+        faster_whisper = (
+            try_faster_whisper_engine(str(model_path)) if model_path.is_dir() else None
+        )
+        if faster_whisper is not None:
+            engine = faster_whisper
+            asr_backend = "faster_whisper"
+        else:
+            engine = EmptySTTEngine()
     else:
         engine = EmptySTTEngine()
 
@@ -58,10 +83,13 @@ def try_build_local_stt(
     mic_ready = False
     mic_message = "mic not probed"
     try:
-        mic = MicCapture()
+        mic = MicCapture(device=mic_device)
         # Lightweight device query — does not record.
         sd = mic._sd_mod()
-        _ = sd.query_devices(kind="input")
+        if mic_device is None:
+            _ = sd.query_devices(kind="input")
+        else:
+            _ = sd.query_devices(mic_device, kind="input")
         mic_ready = True
         mic_message = "mic ready"
     except MicCaptureError as exc:
@@ -83,12 +111,13 @@ def try_build_local_stt(
             asr_backend=asr_backend,
         )
 
-    ready = True
+    ready = asr_backend not in {"empty", "disabled"}
     parts = [f"asr={asr_backend}", mic_message]
     if asr_backend == "empty":
-        parts.append("install openai-whisper for offline ASR (optional)")
+        parts.append("offline ASR package unavailable or model missing")
+        parts.append(f"expected model path: {model_path}")
     return LocalSTTBuildResult(
-        provider=provider,
+        provider=provider if ready else None,
         mic=mic if mic_ready else None,
         ready=ready,
         mic_ready=mic_ready,

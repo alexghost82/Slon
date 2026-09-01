@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Collection
 
 from config.schema import MODEL_ROLE_KEYS
-
 from providers.contracts import ModelInfo
 from providers.errors import CapabilityError
 
@@ -65,3 +64,23 @@ def require_capabilities(model: ModelInfo, required: Collection[str]) -> None:
             role=missing[0],
             model_id=model.model_id,
         )
+
+
+def require_provider_match(model: ModelInfo, provider_id: str) -> None:
+    """Reject a model owned by another adapter before any provider I/O."""
+    if model.provider_id != provider_id:
+        raise CapabilityError(
+            f"model provider {model.provider_id!r} does not match adapter {provider_id!r}",
+            provider_id=provider_id,
+            model_id=model.model_id,
+        )
+
+__all__ = [
+    "KNOWN_ROLES",
+    "ROLE_CAPABILITY_FLAGS",
+    "require_capability",
+    "require_capabilities",
+    "require_provider_match",
+    "supports",
+]
+

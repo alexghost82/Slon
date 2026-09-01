@@ -1,7 +1,12 @@
+from __future__ import annotations
+
 # actions/open_app.py
 # Slon — Cross-Platform App Launcher
 
 import time
+
+from i18n import t
+
 import subprocess
 import platform
 import shutil

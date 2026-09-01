@@ -34,6 +34,31 @@ def test_mic_capture_uses_injected_recorder() -> None:
     assert result.duration_s == 0.1
 
 
+def test_mic_capture_forwards_configured_device() -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeSoundDevice:
+        @staticmethod
+        def rec(frames, **kwargs):
+            calls.append({"frames": frames, **kwargs})
+            return array.array("h", [0] * frames)
+
+        @staticmethod
+        def wait() -> None:
+            return None
+
+    cap = MicCapture(
+        sounddevice_module=FakeSoundDevice,
+        sample_rate=16000,
+        channels=1,
+        device="Studio Mic",
+    )
+    result = cap.record(0.1)
+
+    assert result.audio[:4] == b"RIFF"
+    assert calls[0]["device"] == "Studio Mic"
+
+
 def test_mic_capture_rejects_non_positive_duration() -> None:
     with pytest.raises(ValueError):
         MicCapture(recorder=lambda *a, **k: array.array("h", [0])).record(0)
@@ -70,8 +95,15 @@ async def test_callback_engine_forwards_audio() -> None:
     assert seen == [(b"wav", "ru")]
 
 
-def test_try_build_local_stt_without_requiring_mic() -> None:
+def test_try_build_local_stt_without_asr_backend_is_not_ready() -> None:
     result = try_build_local_stt(prefer_whisper=False, require_mic=False)
-    assert result.ready is True
-    assert result.provider is not None
+    assert result.ready is False
+    assert result.provider is None
     assert result.asr_backend == "empty"
+
+
+def test_try_build_local_stt_can_be_disabled() -> None:
+    result = try_build_local_stt(stt_engine="no", require_mic=False)
+    assert result.ready is False
+    assert result.provider is None
+    assert result.asr_backend == "disabled"

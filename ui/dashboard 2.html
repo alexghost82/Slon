@@ -1,0 +1,1174 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Джарвис — Командный центр</title>
+  <style>
+    :root {
+      --bg: #05080f;
+      --bg-blue: #0a1220;
+      --accent: #00b4ff;
+      --accent-dim: #0077aa;
+      --accent-glow: rgba(0, 180, 255, 0.45);
+      --text: #c8e6ff;
+      --text-dim: #6a8aaa;
+      --panel-bg: rgba(8, 16, 32, 0.72);
+      --border: rgba(0, 160, 255, 0.25);
+      --success: #00e5a0;
+      --warning: #ffaa00;
+      --danger: #ff4466;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", "Roboto", "Helvetica Neue", Arial, sans-serif;
+      font-size: 14px;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body {
+      background: radial-gradient(ellipse at center, #0a1428 0%, #05080f 70%);
+    }
+
+    /* Canvas sphere */
+    #sphere-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+      pointer-events: none;
+    }
+
+    /* Overlay UI */
+    .ui-layer {
+      position: absolute;
+      inset: 0;
+      z-index: 10;
+      pointer-events: none;
+      display: grid;
+      grid-template-columns: 1fr 1.4fr 1fr;
+      grid-template-rows: auto 1fr auto;
+      gap: 12px;
+      padding: 16px 20px;
+    }
+
+    .ui-layer > * {
+      pointer-events: auto;
+    }
+
+    /* Top bar */
+    .top-bar {
+      grid-column: 1 / -1;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 16px;
+      background: var(--panel-bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      backdrop-filter: blur(8px);
+      box-shadow: 0 0 20px rgba(0, 100, 200, 0.15);
+    }
+
+    .title-block {
+      display: flex;
+      align-items: baseline;
+      gap: 14px;
+    }
+
+    .title-block h1 {
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      color: var(--accent);
+      text-shadow: 0 0 12px var(--accent-glow);
+    }
+
+    .datetime {
+      font-variant-numeric: tabular-nums;
+      color: var(--text-dim);
+      font-size: 13px;
+      letter-spacing: 1px;
+    }
+
+    .datetime .time {
+      color: var(--text);
+      font-weight: 500;
+    }
+
+    .status-pills {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .pill {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 4px;
+      background: rgba(0, 40, 80, 0.5);
+      border: 1px solid var(--border);
+      font-size: 11px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+
+    .pill .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--success);
+      box-shadow: 0 0 6px var(--success);
+    }
+
+    .pill.standby .dot {
+      background: var(--warning);
+      box-shadow: 0 0 6px var(--warning);
+    }
+
+    /* Left panel */
+    .left-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      overflow: hidden;
+    }
+
+    .panel {
+      background: var(--panel-bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px 14px;
+      backdrop-filter: blur(8px);
+      box-shadow: 0 0 16px rgba(0, 80, 160, 0.12);
+    }
+
+    .panel-title {
+      font-size: 11px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--accent-dim);
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .panel-title::before {
+      content: "";
+      width: 8px;
+      height: 2px;
+      background: var(--accent);
+      box-shadow: 0 0 6px var(--accent);
+    }
+
+    /* Connections */
+    .conn-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .conn-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+    }
+
+    .conn-name {
+      color: var(--text);
+    }
+
+    .conn-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-dim);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .conn-status {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--success);
+      box-shadow: 0 0 5px var(--success);
+    }
+
+    .conn-status.standby {
+      background: var(--warning);
+      box-shadow: 0 0 5px var(--warning);
+    }
+
+    /* Actions stream */
+    .actions-stream {
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .actions-list {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      scrollbar-width: thin;
+      scrollbar-color: var(--accent-dim) transparent;
+      padding-right: 4px;
+    }
+
+    .action-item {
+      display: flex;
+      gap: 10px;
+      font-size: 12px;
+      line-height: 1.35;
+      padding: 4px 0;
+      border-bottom: 1px solid rgba(0, 100, 180, 0.12);
+    }
+
+    .action-time {
+      color: var(--accent-dim);
+      font-variant-numeric: tabular-nums;
+      flex-shrink: 0;
+      width: 58px;
+    }
+
+    .action-text {
+      color: var(--text);
+      opacity: 0.9;
+    }
+
+    /* Center spacer (sphere area) */
+    .center-spacer {
+      pointer-events: none;
+      position: relative;
+    }
+
+    /* Right panel */
+    .right-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      overflow: hidden;
+    }
+
+    /* Metrics */
+    .metric-row {
+      margin-bottom: 10px;
+    }
+
+    .metric-header {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
+
+    .metric-label {
+      color: var(--text-dim);
+    }
+
+    .metric-value {
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .progress-bar {
+      height: 5px;
+      background: rgba(0, 40, 80, 0.6);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent-dim), var(--accent));
+      border-radius: 3px;
+      box-shadow: 0 0 8px var(--accent-glow);
+      transition: width 0.8s ease;
+    }
+
+    /* Main numbers */
+    .numbers-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .num-card {
+      text-align: center;
+      padding: 10px 6px;
+      background: rgba(0, 30, 60, 0.4);
+      border: 1px solid rgba(0, 120, 200, 0.2);
+      border-radius: 4px;
+    }
+
+    .num-value {
+      font-size: 22px;
+      font-weight: 600;
+      color: var(--accent);
+      text-shadow: 0 0 10px var(--accent-glow);
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 1px;
+    }
+
+    .num-label {
+      font-size: 10px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-top: 4px;
+    }
+
+    /* Priorities */
+    .prio-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .prio-item {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      font-size: 12px;
+    }
+
+    .prio-rank {
+      width: 20px;
+      height: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 100, 180, 0.25);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      color: var(--accent);
+      font-weight: 600;
+      font-size: 11px;
+      flex-shrink: 0;
+    }
+
+    .prio-text {
+      color: var(--text);
+      line-height: 1.35;
+      padding-top: 2px;
+    }
+
+    /* Bottom bar */
+    .bottom-bar {
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 10px 16px;
+      background: var(--panel-bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      backdrop-filter: blur(8px);
+    }
+
+    .brief-btn {
+      flex-shrink: 0;
+      padding: 10px 22px;
+      background: linear-gradient(135deg, rgba(0, 120, 200, 0.4), rgba(0, 80, 160, 0.5));
+      border: 1px solid var(--accent);
+      border-radius: 4px;
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: all 0.25s ease;
+      box-shadow: 0 0 12px rgba(0, 150, 255, 0.2);
+      pointer-events: auto;
+    }
+
+    .brief-btn:hover {
+      background: linear-gradient(135deg, rgba(0, 150, 255, 0.5), rgba(0, 100, 200, 0.6));
+      box-shadow: 0 0 20px rgba(0, 180, 255, 0.4);
+      transform: translateY(-1px);
+    }
+
+    .brief-btn:active {
+      transform: translateY(0);
+    }
+
+    .brief-btn.speaking {
+      animation: pulse-btn 1.2s ease-in-out infinite;
+      border-color: #00e5ff;
+      color: #00e5ff;
+    }
+
+    @keyframes pulse-btn {
+      0%, 100% { box-shadow: 0 0 12px rgba(0, 200, 255, 0.3); }
+      50% { box-shadow: 0 0 24px rgba(0, 220, 255, 0.6); }
+    }
+
+    .ticker-wrap {
+      flex: 1;
+      overflow: hidden;
+      position: relative;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent);
+      -webkit-mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent);
+    }
+
+    .ticker {
+      white-space: nowrap;
+      font-size: 12px;
+      letter-spacing: 1.5px;
+      color: var(--text-dim);
+      animation: ticker-scroll 40s linear infinite;
+    }
+
+    .ticker span {
+      display: inline-block;
+      padding-right: 60px;
+    }
+
+    @keyframes ticker-scroll {
+      0% { transform: translateX(0); }
+      100% { transform: translateX(-50%); }
+    }
+
+    /* HUD decorative elements around sphere (CSS) */
+    .hud-ring {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      border-radius: 50%;
+      border: 1px solid rgba(0, 160, 255, 0.15);
+      pointer-events: none;
+      z-index: 2;
+    }
+
+    .hud-ring.r1 { width: min(42vw, 420px); height: min(42vw, 420px); }
+    .hud-ring.r2 { width: min(52vw, 520px); height: min(52vw, 520px); border-style: dashed; opacity: 0.6; }
+    .hud-ring.r3 { width: min(62vw, 620px); height: min(62vw, 620px); opacity: 0.35; }
+
+    .hud-arc {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: min(48vw, 480px);
+      height: min(48vw, 480px);
+      transform: translate(-50%, -50%);
+      border-radius: 50%;
+      border: 2px solid transparent;
+      border-top-color: rgba(0, 180, 255, 0.35);
+      border-right-color: rgba(0, 180, 255, 0.15);
+      pointer-events: none;
+      z-index: 2;
+      animation: spin-slow 60s linear infinite;
+    }
+
+    .hud-arc.reverse {
+      border-top-color: transparent;
+      border-bottom-color: rgba(0, 160, 255, 0.25);
+      border-left-color: rgba(0, 160, 255, 0.1);
+      animation-direction: reverse;
+      animation-duration: 90s;
+      width: min(55vw, 550px);
+      height: min(55vw, 550px);
+    }
+
+    @keyframes spin-slow {
+      from { transform: translate(-50%, -50%) rotate(0deg); }
+      to { transform: translate(-50%, -50%) rotate(360deg); }
+    }
+
+    /* Radial ticks */
+    .ticks {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: min(58vw, 580px);
+      height: min(58vw, 580px);
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+      z-index: 2;
+    }
+
+    .tick {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      width: 1px;
+      height: 8px;
+      background: rgba(0, 160, 255, 0.3);
+      transform-origin: 50% min(29vw, 290px);
+    }
+
+    .tick.major {
+      height: 14px;
+      width: 1.5px;
+      background: rgba(0, 180, 255, 0.5);
+    }
+
+    /* Mobile adaptations */
+    @media (max-width: 900px) {
+      .ui-layer {
+        grid-template-columns: 1fr 1fr;
+        grid-template-rows: auto auto 1fr auto;
+        padding: 10px;
+        gap: 8px;
+      }
+
+      .top-bar {
+        grid-column: 1 / -1;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .left-panel {
+        grid-column: 1;
+        grid-row: 2;
+      }
+
+      .right-panel {
+        grid-column: 2;
+        grid-row: 2;
+      }
+
+      .center-spacer {
+        display: none;
+      }
+
+      .bottom-bar {
+        grid-column: 1 / -1;
+        grid-row: 4;
+      }
+
+      .hud-ring, .hud-arc, .ticks {
+        display: none;
+      }
+
+      .title-block h1 {
+        font-size: 18px;
+        letter-spacing: 2px;
+      }
+
+      .num-value {
+        font-size: 18px;
+      }
+
+      .panel {
+        padding: 10px;
+      }
+    }
+
+    @media (max-width: 600px) {
+      .ui-layer {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto auto auto auto auto;
+      }
+
+      .left-panel, .right-panel {
+        grid-column: 1;
+      }
+
+      .left-panel { grid-row: 2; }
+      .right-panel { grid-row: 3; }
+      .bottom-bar { grid-row: 5; }
+
+      .status-pills {
+        display: none;
+      }
+
+      .numbers-grid {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    /* Reduced motion */
+    @media (prefers-reduced-motion: reduce) {
+      .hud-arc, .ticker, .brief-btn.speaking {
+        animation: none !important;
+      }
+    }
+
+    /* Audio is hidden */
+    #brief-audio {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="sphere-canvas"></canvas>
+
+  <!-- Decorative HUD -->
+  <div class="hud-ring r1"></div>
+  <div class="hud-ring r2"></div>
+  <div class="hud-ring r3"></div>
+  <div class="hud-arc"></div>
+  <div class="hud-arc reverse"></div>
+  <div class="ticks" id="ticks"></div>
+
+  <div class="ui-layer">
+    <!-- Top -->
+    <header class="top-bar">
+      <div class="title-block">
+        <h1 id="main-title">Джарвис</h1>
+        <div class="datetime">
+          <span id="date-str"></span> · <span class="time" id="time-str">00:00:00</span>
+        </div>
+      </div>
+      <div class="status-pills" id="status-pills"></div>
+    </header>
+
+    <!-- Left -->
+    <aside class="left-panel">
+      <div class="panel">
+        <div class="panel-title">Подключения</div>
+        <div class="conn-list" id="conn-list"></div>
+      </div>
+      <div class="panel actions-stream">
+        <div class="panel-title">Поток действий</div>
+        <div class="actions-list" id="actions-list"></div>
+      </div>
+    </aside>
+
+    <!-- Center spacer -->
+    <div class="center-spacer"></div>
+
+    <!-- Right -->
+    <aside class="right-panel">
+      <div class="panel">
+        <div class="panel-title">Показатели</div>
+        <div id="metrics"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">Главные цифры</div>
+        <div class="numbers-grid" id="numbers"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">Приоритеты дня</div>
+        <div class="prio-list" id="priorities"></div>
+      </div>
+    </aside>
+
+    <!-- Bottom -->
+    <footer class="bottom-bar">
+      <button class="brief-btn" id="brief-btn">Brief Me</button>
+      <div class="ticker-wrap">
+        <div class="ticker" id="ticker"></div>
+      </div>
+    </footer>
+  </div>
+
+  <audio id="brief-audio" preload="auto">
+    <source src="jarvis_brief.mp3" type="audio/mpeg">
+  </audio>
+
+  <script src="jarvis_data.js"></script>
+  <script>
+    (function () {
+      "use strict";
+
+      const data = window.JARVIS_DATA || {};
+      const canvas = document.getElementById("sphere-canvas");
+      const audio = document.getElementById("brief-audio");
+      const briefBtn = document.getElementById("brief-btn");
+
+      // State
+      let mode = "idle"; // idle | speaking
+      let animationId = null;
+      let time = 0;
+      let reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      let gl = null;
+      let program = null;
+      let buffers = {};
+      let uniforms = {};
+      let attribs = {};
+      let particleCount = 0;
+
+      // ---------- WebGL Sphere ----------
+      const PARTICLE_COUNT = 1100;
+
+      const VERT_SRC = `
+        attribute vec3 aPosition;
+        attribute float aSize;
+        attribute float aPhase;
+
+        uniform float uTime;
+        uniform float uSpeaking;
+        uniform float uReduced;
+        uniform vec2  uResolution;
+        uniform float uRadius;   // sphere radius in NDC units (y)
+
+        varying float vDepth;
+        varying float vPhase;
+        varying float vSpeaking;
+
+        mat3 rotY(float a) {
+          float c = cos(a), s = sin(a);
+          return mat3(c, 0.0, s, 0.0, 1.0, 0.0, -s, 0.0, c);
+        }
+        mat3 rotX(float a) {
+          float c = cos(a), s = sin(a);
+          return mat3(1.0, 0.0, 0.0, 0.0, c, -s, 0.0, s, c);
+        }
+
+        void main() {
+          vPhase = aPhase;
+          vSpeaking = uSpeaking;
+
+          float rotSpeedY = mix(0.18, 0.05, uReduced);
+          float rotSpeedX = mix(0.07, 0.02, uReduced);
+          if (uSpeaking > 0.5) {
+            rotSpeedY = mix(0.55, 0.05, uReduced);
+            rotSpeedX = mix(0.22, 0.02, uReduced);
+          }
+
+          float rotYAngle = uTime * rotSpeedY;
+          float rotXAngle = sin(uTime * 0.3) * 0.25 + uTime * rotSpeedX * 0.3;
+
+          float breathAmp = mix(0.015, 0.045, uSpeaking);
+          float breath = 1.0 + sin(uTime * 1.8 + aPhase) * breathAmp;
+
+          vec3 pos = aPosition * breath;
+          pos = rotY(rotYAngle) * pos;
+          pos = rotX(rotXAngle) * pos;
+
+          float scalePulse = mix(
+            1.0 + sin(uTime * 1.1) * 0.028,
+            1.0 + sin(uTime * 5.5) * 0.07 + sin(uTime * 9.0) * 0.035,
+            uSpeaking
+          );
+
+          float aspect = uResolution.x / max(uResolution.y, 1.0);
+          float depth = (pos.z + 1.0) * 0.5; // 0..1
+          vDepth = clamp(depth, 0.0, 1.0);
+
+          // Mild perspective
+          float persp = 1.0 / (1.0 + (1.0 - depth) * 0.35);
+          float r = uRadius * scalePulse * persp;
+
+          vec2 xy = pos.xy * r;
+          xy.x /= aspect;
+
+          gl_Position = vec4(xy, 0.0, 1.0);
+
+          // Point size in pixels — keep moderate so it is not clamped
+          float px = min(uResolution.x, uResolution.y);
+          float basePx = mix(2.2, 3.4, uSpeaking) * aSize;
+          float depthBoost = 0.55 + depth * 0.9;
+          gl_PointSize = clamp(basePx * depthBoost * (px / 700.0), 1.5, 48.0);
+        }
+      `;
+
+      const FRAG_SRC = `
+        precision mediump float;
+
+        varying float vDepth;
+        varying float vPhase;
+        varying float vSpeaking;
+
+        // uTime not needed in fragment — pulse is already in varyings / speaking
+        void main() {
+          vec2 uv = gl_PointCoord - vec2(0.5);
+          float dist = length(uv);
+          if (dist > 0.5) discard;
+
+          float core = smoothstep(0.42, 0.05, dist);
+          float glow = smoothstep(0.5, 0.0, dist);
+
+          float brightness = 0.3 + vDepth * 0.8;
+          float speakBoost = mix(1.0, 1.35, vSpeaking);
+
+          vec3 col = vec3(0.1, 0.55 + vDepth * 0.4, 1.0) * brightness * speakBoost;
+          vec3 coreCol = vec3(0.75, 0.92, 1.0);
+
+          float alpha = (glow * 0.65 + core * 0.95) * brightness;
+          alpha = clamp(alpha * mix(0.9, 1.15, vSpeaking), 0.0, 1.0);
+
+          gl_FragColor = vec4(mix(col, coreCol, core * 0.7), alpha);
+        }
+      `;
+
+      function showError(msg) {
+        let el = document.getElementById("gl-error");
+        if (!el) {
+          el = document.createElement("div");
+          el.id = "gl-error";
+          el.style.cssText = "position:fixed;bottom:80px;left:20px;right:20px;z-index:9999;background:rgba(80,0,0,0.85);color:#ffaaaa;padding:12px;font-size:12px;border-radius:6px;white-space:pre-wrap;max-height:200px;overflow:auto;";
+          document.body.appendChild(el);
+        }
+        el.textContent = (el.textContent ? el.textContent + "\n" : "") + msg;
+      }
+
+      function createShader(type, source) {
+        const sh = gl.createShader(type);
+        gl.shaderSource(sh, source);
+        gl.compileShader(sh);
+        if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+          const log = gl.getShaderInfoLog(sh);
+          console.error("Shader compile error:", log);
+          showError("Shader error: " + log);
+          gl.deleteShader(sh);
+          return null;
+        }
+        return sh;
+      }
+
+      function createProgram(vs, fs) {
+        const prog = gl.createProgram();
+        gl.attachShader(prog, vs);
+        gl.attachShader(prog, fs);
+        gl.linkProgram(prog);
+        if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+          const log = gl.getProgramInfoLog(prog);
+          console.error("Program link error:", log);
+          showError("Link error: " + log);
+          return null;
+        }
+        return prog;
+      }
+
+      function initWebGL() {
+        gl = canvas.getContext("webgl", {
+          alpha: true,
+          antialias: true,
+          premultipliedAlpha: true,
+          preserveDrawingBuffer: false
+        }) || canvas.getContext("experimental-webgl");
+
+        if (!gl) {
+          console.error("WebGL not supported");
+          showError("WebGL not supported");
+          return false;
+        }
+
+        const vs = createShader(gl.VERTEX_SHADER, VERT_SRC);
+        const fs = createShader(gl.FRAGMENT_SHADER, FRAG_SRC);
+        if (!vs || !fs) return false;
+
+        program = createProgram(vs, fs);
+        if (!program) return false;
+
+        gl.useProgram(program);
+
+        // Attributes
+        attribs.position = gl.getAttribLocation(program, "aPosition");
+        attribs.size = gl.getAttribLocation(program, "aSize");
+        attribs.phase = gl.getAttribLocation(program, "aPhase");
+
+        // Uniforms
+        uniforms.time = gl.getUniformLocation(program, "uTime");
+        uniforms.speaking = gl.getUniformLocation(program, "uSpeaking");
+        uniforms.reduced = gl.getUniformLocation(program, "uReduced");
+        uniforms.resolution = gl.getUniformLocation(program, "uResolution");
+        uniforms.radius = gl.getUniformLocation(program, "uRadius");
+
+        // Soft alpha blending for glow points
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        gl.disable(gl.DEPTH_TEST);
+        gl.disable(gl.CULL_FACE);
+
+        initParticles();
+        return true;
+      }
+
+      function initParticles() {
+        // Fibonacci sphere
+        const golden = Math.PI * (3 - Math.sqrt(5));
+        const positions = new Float32Array(PARTICLE_COUNT * 3);
+        const sizes = new Float32Array(PARTICLE_COUNT);
+        const phases = new Float32Array(PARTICLE_COUNT);
+
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+          const y = 1 - (i / (PARTICLE_COUNT - 1)) * 2;
+          const radiusAtY = Math.sqrt(Math.max(0, 1 - y * y));
+          const theta = golden * i;
+          const x = Math.cos(theta) * radiusAtY;
+          const z = Math.sin(theta) * radiusAtY;
+
+          positions[i * 3] = x;
+          positions[i * 3 + 1] = y;
+          positions[i * 3 + 2] = z;
+          sizes[i] = 1.0 + Math.random() * 1.6;
+          phases[i] = Math.random() * Math.PI * 2;
+        }
+
+        particleCount = PARTICLE_COUNT;
+
+        // Position buffer
+        buffers.position = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffers.position);
+        gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+
+        // Size buffer
+        buffers.size = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffers.size);
+        gl.bufferData(gl.ARRAY_BUFFER, sizes, gl.STATIC_DRAW);
+
+        // Phase buffer
+        buffers.phase = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffers.phase);
+        gl.bufferData(gl.ARRAY_BUFFER, phases, gl.STATIC_DRAW);
+      }
+
+      function resizeCanvas() {
+        const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        canvas.width = Math.floor(w * dpr);
+        canvas.height = Math.floor(h * dpr);
+        canvas.style.width = w + "px";
+        canvas.style.height = h + "px";
+
+        if (gl) {
+          gl.viewport(0, 0, canvas.width, canvas.height);
+        }
+      }
+
+      function drawSphere() {
+        if (!gl || !program) return;
+
+        gl.clearColor(0, 0, 0, 0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        gl.useProgram(program);
+
+        // Uniforms
+        gl.uniform1f(uniforms.time, time);
+        gl.uniform1f(uniforms.speaking, mode === "speaking" ? 1.0 : 0.0);
+        gl.uniform1f(uniforms.reduced, reducedMotion ? 1.0 : 0.0);
+        gl.uniform2f(uniforms.resolution, canvas.width, canvas.height);
+
+        // Sphere radius in NDC (y direction). ~0.38–0.45 looks good on most screens
+        gl.uniform1f(uniforms.radius, 0.43);
+
+        // Bind attributes
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffers.position);
+        gl.enableVertexAttribArray(attribs.position);
+        gl.vertexAttribPointer(attribs.position, 3, gl.FLOAT, false, 0, 0);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffers.size);
+        gl.enableVertexAttribArray(attribs.size);
+        gl.vertexAttribPointer(attribs.size, 1, gl.FLOAT, false, 0, 0);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffers.phase);
+        gl.enableVertexAttribArray(attribs.phase);
+        gl.vertexAttribPointer(attribs.phase, 1, gl.FLOAT, false, 0, 0);
+
+        gl.drawArrays(gl.POINTS, 0, particleCount);
+      }
+
+      function animate(ts) {
+        if (!animate.last) animate.last = ts;
+        const dt = Math.min((ts - animate.last) / 1000, 0.05);
+        animate.last = ts;
+        time += dt;
+        drawSphere();
+        animationId = requestAnimationFrame(animate);
+      }
+
+      // ---------- UI population ----------
+      function formatDate(d) {
+        const days = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
+        const months = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+        return `${days[d.getDay()]}, ${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
+      }
+
+      function pad(n) {
+        return n < 10 ? "0" + n : "" + n;
+      }
+
+      function updateClock() {
+        const now = new Date();
+        document.getElementById("date-str").textContent = formatDate(now);
+        document.getElementById("time-str").textContent =
+          pad(now.getHours()) + ":" + pad(now.getMinutes()) + ":" + pad(now.getSeconds());
+      }
+
+      function renderUI() {
+        if (data.title) {
+          document.getElementById("main-title").textContent = data.title;
+        }
+
+        const pills = document.getElementById("status-pills");
+        pills.innerHTML = "";
+        if (data.status) {
+          Object.entries(data.status).forEach(([key, val]) => {
+            const isStandby = String(val).toUpperCase().includes("STANDBY");
+            const el = document.createElement("div");
+            el.className = "pill" + (isStandby ? " standby" : "");
+            el.innerHTML = `<span class="dot"></span>${key}: ${val}`;
+            pills.appendChild(el);
+          });
+        }
+
+        const connList = document.getElementById("conn-list");
+        connList.innerHTML = "";
+        (data.connections || []).forEach(c => {
+          const el = document.createElement("div");
+          el.className = "conn-item";
+          const stClass = c.status === "standby" ? "standby" : "";
+          el.innerHTML = `
+            <span class="conn-name">${c.name}</span>
+            <span class="conn-meta">
+              <span>${c.latency}</span>
+              <span class="conn-status ${stClass}"></span>
+            </span>`;
+          connList.appendChild(el);
+        });
+
+        const actionsList = document.getElementById("actions-list");
+        actionsList.innerHTML = "";
+        (data.recentActions || []).forEach(a => {
+          const el = document.createElement("div");
+          el.className = "action-item";
+          el.innerHTML = `<span class="action-time">${a.time}</span><span class="action-text">${a.text}</span>`;
+          actionsList.appendChild(el);
+        });
+
+        const metricsEl = document.getElementById("metrics");
+        metricsEl.innerHTML = "";
+        (data.metrics || []).forEach(m => {
+          const el = document.createElement("div");
+          el.className = "metric-row";
+          el.innerHTML = `
+            <div class="metric-header">
+              <span class="metric-label">${m.label}</span>
+              <span class="metric-value">${m.value}${m.unit || ""}</span>
+            </div>
+            <div class="progress-bar">
+              <div class="progress-fill" style="width: ${m.value}%"></div>
+            </div>`;
+          metricsEl.appendChild(el);
+        });
+
+        const numbersEl = document.getElementById("numbers");
+        numbersEl.innerHTML = "";
+        (data.mainNumbers || []).forEach(n => {
+          const el = document.createElement("div");
+          el.className = "num-card";
+          el.innerHTML = `<div class="num-value">${n.value}</div><div class="num-label">${n.label}</div>`;
+          numbersEl.appendChild(el);
+        });
+
+        const prioEl = document.getElementById("priorities");
+        prioEl.innerHTML = "";
+        (data.priorities || []).forEach(p => {
+          const el = document.createElement("div");
+          el.className = "prio-item";
+          el.innerHTML = `<div class="prio-rank">${p.rank}</div><div class="prio-text">${p.text}</div>`;
+          prioEl.appendChild(el);
+        });
+
+        const tickerText = data.ticker || "SYSTEM READY • ";
+        const tickerEl = document.getElementById("ticker");
+        tickerEl.innerHTML = `<span>${tickerText}</span><span>${tickerText}</span>`;
+      }
+
+      function buildTicks() {
+        const container = document.getElementById("ticks");
+        container.innerHTML = "";
+        const count = 36;
+        for (let i = 0; i < count; i++) {
+          const tick = document.createElement("div");
+          tick.className = "tick" + (i % 3 === 0 ? " major" : "");
+          tick.style.transform = `rotate(${(360 / count) * i}deg)`;
+          container.appendChild(tick);
+        }
+      }
+
+      // ---------- Audio / Brief ----------
+      function setSpeaking(on) {
+        mode = on ? "speaking" : "idle";
+        briefBtn.classList.toggle("speaking", on);
+        const pills = document.querySelectorAll(".pill");
+        pills.forEach(p => {
+          if (p.textContent.toLowerCase().includes("voice")) {
+            p.classList.toggle("standby", !on);
+          }
+        });
+      }
+
+      briefBtn.addEventListener("click", () => {
+        if (mode === "speaking") {
+          audio.pause();
+          audio.currentTime = 0;
+          setSpeaking(false);
+          return;
+        }
+        audio.play().then(() => {
+          setSpeaking(true);
+        }).catch(() => {
+          setSpeaking(true);
+          setTimeout(() => setSpeaking(false), 8000);
+        });
+      });
+
+      audio.addEventListener("ended", () => setSpeaking(false));
+      audio.addEventListener("pause", () => {
+        if (audio.currentTime === 0 || audio.ended) setSpeaking(false);
+      });
+
+      // ---------- Init ----------
+      function init() {
+        resizeCanvas();
+        const ok = initWebGL();
+        if (!ok) {
+          console.error("Failed to init WebGL sphere");
+        }
+        buildTicks();
+        renderUI();
+        updateClock();
+        setInterval(updateClock, 1000);
+
+        if (!reducedMotion) {
+          animationId = requestAnimationFrame(animate);
+        } else {
+          drawSphere();
+        }
+
+        window.addEventListener("resize", () => {
+          resizeCanvas();
+          if (reducedMotion) drawSphere();
+        });
+
+        window.matchMedia("(prefers-reduced-motion: reduce)").addEventListener("change", (e) => {
+          reducedMotion = e.matches;
+          if (reducedMotion) {
+            if (animationId) cancelAnimationFrame(animationId);
+            drawSphere();
+          } else {
+            animate.last = null;
+            animationId = requestAnimationFrame(animate);
+          }
+        });
+      }
+
+      init();
+    })();
+  </script>
+</body>
+</html>
